@@ -269,14 +269,10 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         ws.merge_cells(start_row=start_row, end_row=start_row + first_site_idx - 1,
                        start_column=COL['P'], end_column=COL['P'])
 
-    if cmd_idx is not None and cmd_idx > 0:
-        if cmd_idx >= 2:
-            ws.merge_cells(start_row=start_row, end_row=start_row + cmd_idx - 1,
-                           start_column=COL['D'], end_column=COL['D'])
-        if end_row - (start_row + cmd_idx) >= 1:
-            ws.merge_cells(start_row=start_row + cmd_idx, end_row=end_row,
-                           start_column=COL['D'], end_column=COL['D'])
-    elif n > 1:
+    # D column: SINGLE merge across whole block with multi-line content
+    # ("S2A BP\nCMD-XXXX"). Earlier we split into two merges, but the user
+    # confirmed it should be one cell with two lines.
+    if n > 1:
         ws.merge_cells(start_row=start_row, end_row=end_row,
                        start_column=COL['D'], end_column=COL['D'])
 
@@ -288,16 +284,13 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
 
     ws.cell(row=start_row, column=COL['A'], value=block['cube_no'])
     ws.cell(row=start_row, column=COL['B'], value=block['sample_mark'])
-    # D column: supplier (top) + CMD-XXXX (bottom). Force vertical center alignment
-    # on merge anchors so the text shows in the middle of the merged area.
-    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    d_top = ws.cell(row=start_row, column=COL['D'])
-    d_top.value = block.get('supplier', 'S2A BP')
-    d_top.alignment = center_align
-    if cmd_idx is not None and block.get('cmd_code'):
-        d_bot = ws.cell(row=start_row + cmd_idx, column=COL['D'])
-        d_bot.value = f"CMD-{block['cmd_code']}"
-        d_bot.alignment = center_align
+    # D column: single merged cell with multi-line content (supplier + CMD-XXX)
+    d_value = block.get('supplier', 'S2A BP')
+    if block.get('cmd_code'):
+        d_value = f"{d_value}\nCMD-{block['cmd_code']}"
+    d_cell = ws.cell(row=start_row, column=COL['D'])
+    d_cell.value = d_value
+    d_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     ws.cell(row=start_row, column=COL['E'], value=block.get('site_location', ''))
     if block.get('section') is not None:
         ws.cell(row=start_row, column=COL['F'], value=block['section'])
