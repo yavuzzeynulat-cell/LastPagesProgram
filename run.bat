@@ -1,5 +1,4 @@
 @echo off
-setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ============================================================
@@ -7,16 +6,15 @@ echo  Last Pages Program - Cube Block Creator
 echo ============================================================
 echo.
 
-REM --- Download latest version from GitHub (silent fail to local files) ---
 echo [1/3] Guncel surum indiriliyor...
-curl -sSLf -o create_blocks.py.new "https://raw.githubusercontent.com/yavuzzeynulat-cell/LastPagesProgram/main/create_blocks.py" && move /Y create_blocks.py.new create_blocks.py >nul
-curl -sSLf -o blocks_data.json.new "https://raw.githubusercontent.com/yavuzzeynulat-cell/LastPagesProgram/main/blocks_data.json" && move /Y blocks_data.json.new blocks_data.json >nul
-if exist create_blocks.py.new del create_blocks.py.new >nul 2>&1
-if exist blocks_data.json.new del blocks_data.json.new >nul 2>&1
+curl -sSL -o create_blocks.py.tmp "https://raw.githubusercontent.com/yavuzzeynulat-cell/LastPagesProgram/main/create_blocks.py"
+if exist create_blocks.py.tmp move /Y create_blocks.py.tmp create_blocks.py >nul
+
+curl -sSL -o blocks_data.json.tmp "https://raw.githubusercontent.com/yavuzzeynulat-cell/LastPagesProgram/main/blocks_data.json"
+if exist blocks_data.json.tmp move /Y blocks_data.json.tmp blocks_data.json >nul
 echo     Tamam.
 echo.
 
-REM --- Ensure openpyxl is installed ---
 echo [2/3] openpyxl kontrol ediliyor...
 python -c "import openpyxl" 2>nul
 if errorlevel 1 (
@@ -26,19 +24,10 @@ if errorlevel 1 (
 echo     Tamam.
 echo.
 
-REM --- Get Excel path: from arg (drag-and-drop) or from config or prompt ---
 set "EXCEL=%~1"
+if "%EXCEL%"=="" if exist config.txt set /p EXCEL=<config.txt
 if "%EXCEL%"=="" (
-    if exist config.txt (
-        set /p EXCEL=<config.txt
-    )
-)
-if "%EXCEL%"=="" (
-    echo Excel dosyasinin tam yolunu girin (veya bu .bat uzerine surukleyin^):
-    set /p EXCEL=^>
-    if not "!EXCEL!"=="" (
-        echo !EXCEL!>config.txt
-    )
+    set /p EXCEL=Excel dosyasinin tam yolunu girin: 
 )
 
 if "%EXCEL%"=="" (
@@ -47,20 +36,16 @@ if "%EXCEL%"=="" (
     exit /b 1
 )
 
+echo %EXCEL%>config.txt
+
 echo [3/3] Script calistiriliyor...
 echo     Excel: %EXCEL%
 echo.
 
 python create_blocks.py "%EXCEL%"
-set RC=%ERRORLEVEL%
 
 echo.
 echo ============================================================
-if %RC%==0 (
-    echo  BASARILI. Cikti dosyasi ayni klasorde.
-) else (
-    echo  HATA olustu. Yukaridaki mesaja bak.
-)
+echo  BITTI. Cikmak icin bir tusa basin.
 echo ============================================================
-echo.
-pause
+pause >nul
