@@ -7,12 +7,10 @@ PyInstaller ile .exe yapilir, Python kurmaya gerek yok.
 import os
 import re
 import sys
-import json
 import threading
 import traceback
 from copy import copy
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk, messagebox
@@ -123,7 +121,7 @@ COL = {
     'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15,
     'P': 16, 'Q': 17,
 }
-WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J', 'P']
+WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J']  # P handled separately (site rows need individual cells)
 DATE_COLS = ['I', 'K']
 DATE_FORMAT = 'DD/MM/YYYY'
 
@@ -261,6 +259,13 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         for col_letter in WHOLE_BLOCK_MERGES:
             ws.merge_cells(start_row=start_row, end_row=end_row,
                            start_column=COL[col_letter], end_column=COL[col_letter])
+
+    # P column: merge only over rows BEFORE the first site row.
+    # Site rows need individual P cells to write 'Site'.
+    first_site_idx = next((i for i, r in enumerate(rows) if r.get('row_type') == 'site'), n)
+    if first_site_idx >= 2:
+        ws.merge_cells(start_row=start_row, end_row=start_row + first_site_idx - 1,
+                       start_column=COL['P'], end_column=COL['P'])
 
     if cmd_idx is not None and cmd_idx > 0:
         if cmd_idx >= 2:
