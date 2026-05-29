@@ -63,10 +63,9 @@ BLOCKS = [
             {"mould": 48,  "row_type": "wp",   "age": "WP"},
             {"mould": 44,  "row_type": "wp",   "age": "WP"},
             {"mould": 31,  "row_type": "wp",   "age": "WP"},
-            {"mould": 60,  "row_type": "2day", "age": 2},
+            {"mould": 60,  "row_type": "site", "age": 2, "testing_date": "28.05.26"},
             {"mould": 8,   "row_type": "site"},
             {"mould": 121, "row_type": "site"},
-            {"mould": None,"row_type": "site"},
             {"mould": None,"row_type": "ft",   "age": "F/T", "ft_note": "(15 Adet)"},
         ],
     },
@@ -307,12 +306,13 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         td = compute_testing_date(sampling, row.get('row_type'), row.get('testing_date'))
         if td is not None:
             ws.cell(row=r, column=COL['K'], value=td)
-        # Age (L): formula =K-I for numeric ages; literal text for WP/F/T/etc.
-        rt = row.get('row_type')
-        if rt in ('7d', 'cmd', '28d', '1day', '2day') and td is not None:
+        # Age (L): formula =K-I when both sampling + testing date are real numbers.
+        # For WP / F-T / Site without date, write the literal label.
+        age_val = row.get('age')
+        if td is not None and isinstance(age_val, (int, float)):
             ws.cell(row=r, column=COL['L'], value=f"=K{r}-I{r}")
-        elif row.get('age') is not None:
-            ws.cell(row=r, column=COL['L'], value=row['age'])
+        elif age_val is not None:
+            ws.cell(row=r, column=COL['L'], value=age_val)
         if row.get('row_type') == 'ft' and row.get('ft_note'):
             ws.cell(row=r, column=COL['N'], value=row['ft_note'])
         if row.get('row_type') == 'site':
