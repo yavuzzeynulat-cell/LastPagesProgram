@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk, messagebox
 
 import openpyxl
+from openpyxl.styles import Alignment
 
 
 # ---------------- BLOCK DATA (inline; ileride GitHub'tan cekilebilir) ----------------
@@ -65,6 +66,7 @@ BLOCKS = [
             {"mould": 60,  "row_type": "2day", "age": 2},
             {"mould": 8,   "row_type": "site"},
             {"mould": 121, "row_type": "site"},
+            {"mould": None,"row_type": "site"},
             {"mould": None,"row_type": "ft",   "age": "F/T", "ft_note": "(15 Adet)"},
         ],
     },
@@ -286,10 +288,16 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
 
     ws.cell(row=start_row, column=COL['A'], value=block['cube_no'])
     ws.cell(row=start_row, column=COL['B'], value=block['sample_mark'])
-    ws.cell(row=start_row, column=COL['D'], value=block.get('supplier', 'S2A BP'))
+    # D column: supplier (top) + CMD-XXXX (bottom). Force vertical center alignment
+    # on merge anchors so the text shows in the middle of the merged area.
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    d_top = ws.cell(row=start_row, column=COL['D'])
+    d_top.value = block.get('supplier', 'S2A BP')
+    d_top.alignment = center_align
     if cmd_idx is not None and block.get('cmd_code'):
-        ws.cell(row=start_row + cmd_idx, column=COL['D'],
-                value=f"CMD-{block['cmd_code']}")
+        d_bot = ws.cell(row=start_row + cmd_idx, column=COL['D'])
+        d_bot.value = f"CMD-{block['cmd_code']}"
+        d_bot.alignment = center_align
     ws.cell(row=start_row, column=COL['E'], value=block.get('site_location', ''))
     if block.get('section') is not None:
         ws.cell(row=start_row, column=COL['F'], value=block['section'])
@@ -306,7 +314,11 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         td = compute_testing_date(sampling, row.get('row_type'), row.get('testing_date'))
         if td is not None:
             ws.cell(row=r, column=COL['K'], value=td)
-        if row.get('age') is not None:
+        # Age (L): formula =K-I for numeric ages; literal text for WP/F/T/etc.
+        rt = row.get('row_type')
+        if rt in ('7d', 'cmd', '28d', '1day', '2day') and td is not None:
+            ws.cell(row=r, column=COL['L'], value=f"=K{r}-I{r}")
+        elif row.get('age') is not None:
             ws.cell(row=r, column=COL['L'], value=row['age'])
         if row.get('row_type') == 'ft' and row.get('ft_note'):
             ws.cell(row=r, column=COL['N'], value=row['ft_note'])
