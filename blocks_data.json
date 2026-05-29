@@ -1,0 +1,92 @@
+[
+  {
+    "cube_no": 713,
+    "sample_mark": "G26-CON-0759",
+    "supplier": "S2A BP",
+    "cmd_code": "7015",
+    "site_location": "KM 8+166 Bridge B0080 Pier Lift 14 at Pier 57 on Bridge B0080",
+    "section": "2A",
+    "batch_ticket": 15059,
+    "c_grade": "C35/45",
+    "sampling_date": "26.05.26",
+    "sampled_by": "B.I",
+    "rows": [
+      {"mould": 5,   "row_type": "7d",  "age": 7},
+      {"mould": 69,  "row_type": "7d",  "age": 7},
+      {"mould": 80,  "row_type": "cmd", "age": 7},
+      {"mould": 132, "row_type": "28d", "age": 28},
+      {"mould": 113, "row_type": "28d", "age": 28},
+      {"mould": 96,  "row_type": "28d", "age": 28}
+    ]
+  },
+  {
+    "cube_no": 714,
+    "sample_mark": "G26-CON-0761",
+    "supplier": "S2A BP",
+    "cmd_code": "7008",
+    "site_location": "KM 8+166 Bridge B0080 Precast Girders - L2G on Bridge B0080",
+    "section": "2A",
+    "batch_ticket": 15062,
+    "c_grade": "C40/50",
+    "sampling_date": "26.05.26",
+    "sampled_by": "S.B",
+    "rows": [
+      {"mould": 171, "row_type": "7d",   "age": 7},
+      {"mould": 92,  "row_type": "7d",   "age": 7},
+      {"mould": 117, "row_type": "cmd",  "age": 7},
+      {"mould": 2,   "row_type": "28d",  "age": 28},
+      {"mould": 16,  "row_type": "28d",  "age": 28},
+      {"mould": 186, "row_type": "28d",  "age": 28},
+      {"mould": 48,  "row_type": "wp",   "age": "WP"},
+      {"mould": 44,  "row_type": "wp",   "age": "WP"},
+      {"mould": 31,  "row_type": "wp",   "age": "WP"},
+      {"mould": 60,  "row_type": "2day", "age": 2},
+      {"mould": 8,   "row_type": "site"},
+      {"mould": 121, "row_type": "site"},
+      {"mould": null,"row_type": "ft",   "age": "F/T", "ft_note": "(15 Adet)"}
+    ]
+  },
+  {
+    "cube_no": 715,
+    "sample_mark": "G26-CON-0762",
+    "supplier": "S2A BP",
+    "cmd_code": "7302",
+    "site_location": "KM 5+050 Bridge B0051 Pile No.60,57 at Pier S4R on Bridge B0051",
+    "section": "2A",
+    "batch_ticket": 15070,
+    "c_grade": "C30/37",
+    "sampling_date": "26.05.26",
+    "sampled_by": "S.B",
+    "rows": [
+      {"mould": 139, "row_type": "7d",  "age": 7},
+      {"mould": 90,  "row_type": "7d",  "age": 7},
+      {"mould": 157, "row_type": "cmd", "age": 7},
+      {"mould": 136, "row_type": "28d", "age": 28},
+      {"mould": 71,  "row_type": "28d", "age": 28},
+      {"mould": 48,  "row_type": "28d", "age": 28},
+      {"mould": 180, "row_type": "wp",  "age": "WP"},
+      {"mould": 29,  "row_type": "wp",  "age": "WP"},
+      {"mould": 130, "row_type": "wp",  "age": "WP"}
+    ]
+  },
+  {
+    "cube_no": 716,
+    "sample_mark": "G26-CON-0763",
+    "supplier": "S2A BP",
+    "cmd_code": "7410",
+    "site_location": "KM:35+935 - KM 37+960 [KM 1+400-KM 1+470] & [KM 1+370-KM 1+400] Irrigation Channel Relocation Works Irrigation Channel Relocation Works Radiovce Bistrica Open Irrigation Channel",
+    "section": 1,
+    "batch_ticket": 15080,
+    "c_grade": "C25/30",
+    "sampling_date": "26.05.26",
+    "sampled_by": "Y.A",
+    "rows": [
+      {"mould": 93,  "row_type": "7d",  "age": 7},
+      {"mould": 138, "row_type": "7d",  "age": 7},
+      {"mould": 24,  "row_type": "cmd", "age": 7},
+      {"mould": 75,  "row_type": "28d", "age": 28},
+      {"mould": 63,  "row_type": "28d", "age": 28},
+      {"mould": 74,  "row_type": "28d", "age": 28}
+    ]
+  }
+]
