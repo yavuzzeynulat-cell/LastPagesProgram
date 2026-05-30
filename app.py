@@ -24,468 +24,18 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
 
 
 # ---------------- BLOCK DATA ----------------
-# PDF'ten elle cikarildi (LastPagessss.pdf, 5 sayfa, cubes 698-716).
-# Gemini entegrasyonu gelince bu liste API'dan ayni formatta gelecek.
+# Runtime'da Gemini'den dolar (PDF SEC + GEMINI butonu).
 # run_writer once Excel'de mevcut cube_no'lari okuyup BLOCKS'tan filtreliyor
-# (dedup) - yani Excel'de zaten olan cube'lar otomatik atlanir.
+# (dedup) - Excel'de olan cube'lar atlanir.
 
-BLOCKS = [
-    {
-        "cube_no": 698,
-        "sample_mark": "G26-CON-743",
-        "supplier": "S2A BP",
-        "cmd_code": "7312",
-        "site_location": "B0051 Bridge Km:5+050 SBL Link Slab",
-        "section": "2A",
-        "batch_ticket": 14958,
-        "c_grade": "C30/37",
-        "sampling_date": "21.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 176, "row_type": "7d",   "age": 7},
-            {"mould": 9,   "row_type": "7d",   "age": 7},
-            {"mould": 136, "row_type": "cmd",  "age": 7},
-            {"mould": 78,  "row_type": "28d",  "age": 28},
-            {"mould": 142, "row_type": "28d",  "age": 28},
-            {"mould": 106, "row_type": "28d",  "age": 28},
-            {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26"},
-            {"mould": 89,  "row_type": "site"},
-            {"mould": 8,   "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 699,
-        "sample_mark": "G26-CON-744",
-        "supplier": "S2A BP",
-        "cmd_code": "7304",
-        "site_location": "Precast Yard Km:5+600 B48-T48, B49-T49 / Box culvert C0104 / C0047A Segment 1-2",
-        "section": "2A",
-        "batch_ticket": 14959,
-        "c_grade": "C30/37",
-        "sampling_date": "21.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 180, "row_type": "7d",   "age": 7},
-            {"mould": 121, "row_type": "7d",   "age": 7},
-            {"mould": 177, "row_type": "cmd",  "age": 7},
-            {"mould": 186, "row_type": "28d",  "age": 28},
-            {"mould": 94,  "row_type": "28d",  "age": 28},
-            {"mould": 71,  "row_type": "28d",  "age": 28},
-            {"mould": 66,  "row_type": "site", "age": 1, "testing_date": "22.05.26"},
-            {"mould": 55,  "row_type": "site"},
-            {"mould": 196, "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 700,
-        "sample_mark": "G26-CON-745",
-        "supplier": "S2A BP",
-        "cmd_code": "7015",
-        "site_location": "B0080 Bridge Km:8+166 Pier S10 Pier Lift 4",
-        "section": "2A",
-        "batch_ticket": 14966,
-        "c_grade": "C35/45",
-        "sampling_date": "22.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 135, "row_type": "7d",  "age": 7},
-            {"mould": 153, "row_type": "7d",  "age": 7},
-            {"mould": 14,  "row_type": "cmd", "age": 7},
-            {"mould": 63,  "row_type": "28d", "age": 28},
-            {"mould": 114, "row_type": "28d", "age": 28},
-            {"mould": 170, "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 701,
-        "sample_mark": "G26-CON-746",
-        "supplier": "S2A BP",
-        "cmd_code": "7302",
-        "site_location": "B0051 Bridge Km:5+050 S4R Pile No: 62",
-        "section": "2A",
-        "batch_ticket": 14972,
-        "c_grade": "C30/37",
-        "sampling_date": "22.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 181, "row_type": "7d",  "age": 7},
-            {"mould": 139, "row_type": "7d",  "age": 7},
-            {"mould": 95,  "row_type": "cmd", "age": 7},
-            {"mould": 83,  "row_type": "28d", "age": 28},
-            {"mould": 161, "row_type": "28d", "age": 28},
-            {"mould": 47,  "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 702,
-        "sample_mark": "G26-CON-747",
-        "supplier": "S2A BP",
-        "cmd_code": "7109",
-        "site_location": "Beam Yard Km:5+800 O0458 Overpass Girders G1E - G2E",
-        "section": "2A",
-        "batch_ticket": 14973,
-        "c_grade": "C40/50",
-        "sampling_date": "22.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 90,  "row_type": "7d",   "age": 7},
-            {"mould": 118, "row_type": "7d",   "age": 7},
-            {"mould": 18,  "row_type": "cmd",  "age": 7},
-            {"mould": 26,  "row_type": "28d",  "age": 28},
-            {"mould": 190, "row_type": "28d",  "age": 28},
-            {"mould": 164, "row_type": "28d",  "age": 28},
-            {"mould": 58,  "row_type": "site", "age": 1, "testing_date": "23.05.26"},
-            {"mould": 171, "row_type": "site"},
-            {"mould": 93,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 703,
-        "sample_mark": "G26-CON-748",
-        "supplier": "S2A BP",
-        "cmd_code": "7011",
-        "site_location": "Beam Yard Km:5+800 B0051 Bridge Safety Barrier",
-        "section": "2A",
-        "batch_ticket": 14978,
-        "c_grade": "C35/45",
-        "sampling_date": "22.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 77,  "row_type": "7d",   "age": 7},
-            {"mould": 51,  "row_type": "7d",   "age": 7},
-            {"mould": 178, "row_type": "cmd",  "age": 7},
-            {"mould": 115, "row_type": "28d",  "age": 28},
-            {"mould": 24,  "row_type": "28d",  "age": 28},
-            {"mould": 143, "row_type": "28d",  "age": 28},
-            {"mould": 173, "row_type": "site", "age": 1, "testing_date": "23.05.26"},
-            {"mould": 137, "row_type": "site"},
-            {"mould": 99,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 704,
-        "sample_mark": "G26-CON-749",
-        "supplier": "S2A BP",
-        "cmd_code": "7312",
-        "site_location": "B0051 Bridge Km:5+050 S7L-S8L Deck Slab / Km:35+935-37+960 / Km:1+935 Irrigation Channel Crossing Foundation Concrete",
-        "section": 1,
-        "batch_tickets": [
-            {"ticket": 14979, "rows": [0, 5]},
-            {"ticket": 14983, "rows": [6, 11]},
-        ],
-        "c_grade": "C30/37",
-        "sampling_date": "23.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 16,  "row_type": "7d",   "age": 7},
-            {"mould": 53,  "row_type": "7d",   "age": 7},
-            {"mould": 46,  "row_type": "cmd",  "age": 7},
-            {"mould": 59,  "row_type": "7d",   "age": 7},
-            {"mould": 21,  "row_type": "7d",   "age": 7},
-            {"mould": 133, "row_type": "7d",   "age": 7},
-            {"mould": 32,  "row_type": "28d",  "age": 28},
-            {"mould": 145, "row_type": "28d",  "age": 28},
-            {"mould": 72,  "row_type": "28d",  "age": 28},
-            {"mould": 110, "row_type": "28d",  "age": 28},
-            {"mould": 70,  "row_type": "28d",  "age": 28},
-            {"mould": 168, "row_type": "28d",  "age": 28},
-            {"mould": 100, "row_type": "site", "age": 1, "testing_date": "24.05.26"},
-            {"mould": 2,   "row_type": "site"},
-            {"mould": 140, "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 705,
-        "sample_mark": "G26-CON-750",
-        "supplier": "S2A BP",
-        "cmd_code": "7008",
-        "site_location": "Beam Yard Km:5+800 B0080 Bridge L2F Girder",
-        "section": "2A",
-        "batch_ticket": 14988,
-        "c_grade": "C40/50",
-        "sampling_date": "23.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 84,  "row_type": "7d",   "age": 7},
-            {"mould": 177, "row_type": "7d",   "age": 7},
-            {"mould": 147, "row_type": "cmd",  "age": 7},
-            {"mould": 42,  "row_type": "28d",  "age": 28},
-            {"mould": 74,  "row_type": "28d",  "age": 28},
-            {"mould": 157, "row_type": "28d",  "age": 28},
-            {"mould": 197, "row_type": "site", "age": 2, "testing_date": "25.05.26"},
-            {"mould": 117, "row_type": "site"},
-            {"mould": 86,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 706,
-        "sample_mark": "G26-CON-751",
-        "supplier": "S2A BP",
-        "cmd_code": "7307",
-        "site_location": "B0051 Bridge Km:5+050 S4R Pile No:64 - Pile No:63",
-        "section": "2A",
-        "batch_ticket": 14990,
-        "c_grade": "C30/37",
-        "sampling_date": "23.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 40,  "row_type": "7d",  "age": 7},
-            {"mould": 3,   "row_type": "7d",  "age": 7},
-            {"mould": 31,  "row_type": "cmd", "age": 7},
-            {"mould": 169, "row_type": "28d", "age": 28},
-            {"mould": 12,  "row_type": "28d", "age": 28},
-            {"mould": 151, "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 707,
-        "sample_mark": "G26-CON-753",
-        "supplier": "S2A BP",
-        "cmd_code": "7011",
-        "site_location": "Beam Yard Km:5+800 B0051 Bridge Safety Barrier",
-        "section": "2A",
-        "batch_ticket": 15006,
-        "c_grade": "C35/45",
-        "sampling_date": "23.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 18,  "row_type": "7d",   "age": 7},
-            {"mould": 167, "row_type": "7d",   "age": 7},
-            {"mould": 53,  "row_type": "cmd",  "age": 7},
-            {"mould": 85,  "row_type": "28d",  "age": 28},
-            {"mould": 92,  "row_type": "28d",  "age": 28},
-            {"mould": 166, "row_type": "28d",  "age": 28},
-            {"mould": 13,  "row_type": "site", "age": 2, "testing_date": "25.05.26"},
-            {"mould": 49,  "row_type": "site"},
-            {"mould": 57,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 708,
-        "sample_mark": "G26-CON-754",
-        "supplier": "S2A BP",
-        "cmd_code": "7106",
-        "site_location": "B0080 Bridge Km:8+166 S8 Pile cap Part 1",
-        "section": "2A",
-        "batch_tickets": [
-            {"ticket": 15013, "rows": [0, 3]},
-            {"ticket": 15020, "rows": [4, 7]},
-            {"ticket": 15028, "rows": [8, 11]},
-        ],
-        "c_grade": "C30/37",
-        "sampling_date": "25.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 52,  "row_type": "7d",  "age": 7},
-            {"mould": 102, "row_type": "7d",  "age": 7},
-            {"mould": 36,  "row_type": "cmd", "age": 7},
-            {"mould": 27,  "row_type": "28d", "age": 28},
-            {"mould": 133, "row_type": "28d", "age": 28},
-            {"mould": 25,  "row_type": "28d", "age": 28},
-            {"mould": 160, "row_type": "28d", "age": 28},
-            {"mould": 45,  "row_type": "28d", "age": 28},
-            {"mould": 22,  "row_type": "28d", "age": 28},
-            {"mould": 175, "row_type": "28d", "age": 28},
-            {"mould": 156, "row_type": "28d", "age": 28},
-            {"mould": 167, "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 709,
-        "sample_mark": "G26-CON-755",
-        "supplier": "S2A BP",
-        "cmd_code": "7302",
-        "site_location": "B0051 Bridge Km:5+050 S4R Pile No:61 / Pile No:59",
-        "section": "2A",
-        "batch_ticket": 15034,
-        "c_grade": "C30/37",
-        "sampling_date": "25.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 61,  "row_type": "7d",  "age": 7},
-            {"mould": 120, "row_type": "7d",  "age": 7},
-            {"mould": 155, "row_type": "cmd", "age": 7},
-            {"mould": 87,  "row_type": "28d", "age": 28},
-            {"mould": 104, "row_type": "28d", "age": 28},
-            {"mould": 17,  "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 710,
-        "sample_mark": "G26-CON-756",
-        "supplier": "S2A BP",
-        "cmd_code": "7011",
-        "site_location": "Beam Yard Km:5+800 B0132 Bridge Safety Barrier concrete",
-        "section": "2A",
-        "batch_ticket": 15046,
-        "c_grade": "C35/45",
-        "sampling_date": "25.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 129, "row_type": "7d",   "age": 7},
-            {"mould": 111, "row_type": "7d",   "age": 7},
-            {"mould": 65,  "row_type": "cmd",  "age": 7},
-            {"mould": 101, "row_type": "28d",  "age": 28},
-            {"mould": 195, "row_type": "28d",  "age": 28},
-            {"mould": 172, "row_type": "28d",  "age": 28},
-            {"mould": 123, "row_type": "site", "age": 1, "testing_date": "26.05.26"},
-            {"mould": 192, "row_type": "site"},
-            {"mould": 19,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 711,
-        "sample_mark": "G26-CON-757",
-        "supplier": "S2A BP",
-        "cmd_code": "7304",
-        "site_location": "Pre-cast Yard Km:5+600 Pre-cast box culvert C0104-B50 d T50 / Box culvert T01 C0134 / Box culvert C0047A Segment 03-04",
-        "section": "2A",
-        "batch_tickets": [
-            {"ticket": 15047, "rows": [0, 11]},
-            {"ticket": 15050, "rows": [12, 14]},
-        ],
-        "c_grade": "C30/37",
-        "sampling_date": "25.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 191, "row_type": "7d",   "age": 7},
-            {"mould": 134, "row_type": "7d",   "age": 7},
-            {"mould": 23,  "row_type": "cmd",  "age": 7},
-            {"mould": 28,  "row_type": "28d",  "age": 28},
-            {"mould": 37,  "row_type": "28d",  "age": 28},
-            {"mould": 124, "row_type": "28d",  "age": 28},
-            {"mould": 88,  "row_type": "site", "age": 1, "testing_date": "26.05.26"},
-            {"mould": 128, "row_type": "site"},
-            {"mould": 6,   "row_type": "site"},
-            {"mould": 174, "row_type": "site", "age": 1, "testing_date": "26.05.26"},
-            {"mould": 107, "row_type": "site"},
-            {"mould": 188, "row_type": "site"},
-            {"mould": 79,  "row_type": "site", "age": 1, "testing_date": "26.05.26"},
-            {"mould": 152, "row_type": "site"},
-            {"mould": 179, "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 712,
-        "sample_mark": "G26-CON-758",
-        "supplier": "S2A BP",
-        "cmd_code": "7109",
-        "site_location": "Beam Yard Km:5+800 O0458 Overpass Girder Section-1 G3E - G4E",
-        "section": "2A",
-        "batch_ticket": 15051,
-        "c_grade": "C40/50",
-        "sampling_date": "25.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 108, "row_type": "7d",   "age": 7},
-            {"mould": 7,   "row_type": "7d",   "age": 7},
-            {"mould": 126, "row_type": "cmd",  "age": 7},
-            {"mould": 97,  "row_type": "28d",  "age": 28},
-            {"mould": 15,  "row_type": "28d",  "age": 28},
-            {"mould": 10,  "row_type": "28d",  "age": 28},
-            {"mould": 125, "row_type": "site", "age": 1, "testing_date": "26.05.26"},
-            {"mould": 144, "row_type": "site"},
-            {"mould": 11,  "row_type": "site"},
-        ],
-    },
-    {
-        "cube_no": 713,
-        "sample_mark": "G26-CON-759",
-        "supplier": "S2A BP",
-        "cmd_code": "7015",
-        "site_location": "B0080 Bridge Km:8+166 Pier S7 Pier Lift 14",
-        "section": "2A",
-        "batch_ticket": 15059,
-        "c_grade": "C35/45",
-        "sampling_date": "26.05.26",
-        "sampled_by": "B.I",
-        "rows": [
-            {"mould": 5,   "row_type": "7d",  "age": 7},
-            {"mould": 69,  "row_type": "7d",  "age": 7},
-            {"mould": 80,  "row_type": "cmd", "age": 7},
-            {"mould": 132, "row_type": "28d", "age": 28},
-            {"mould": 113, "row_type": "28d", "age": 28},
-            {"mould": 96,  "row_type": "28d", "age": 28},
-        ],
-    },
-    {
-        "cube_no": 714,
-        "sample_mark": "G26-CON-761",
-        "supplier": "S2A BP",
-        "cmd_code": "7008",
-        "site_location": "Beam Yard Km:5+800 B0080 bridge Girder L2G",
-        "section": "2A",
-        "batch_ticket": 15062,
-        "c_grade": "C40/50",
-        "sampling_date": "26.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 171, "row_type": "7d",   "age": 7},
-            {"mould": 92,  "row_type": "7d",   "age": 7},
-            {"mould": 117, "row_type": "cmd",  "age": 7},
-            {"mould": 2,   "row_type": "28d",  "age": 28},
-            {"mould": 16,  "row_type": "28d",  "age": 28},
-            {"mould": 186, "row_type": "28d",  "age": 28},
-            {"mould": 48,  "row_type": "wp",   "age": "WP"},
-            {"mould": 44,  "row_type": "wp",   "age": "WP"},
-            {"mould": 31,  "row_type": "wp",   "age": "WP"},
-            {"mould": 60,  "row_type": "site", "age": 2, "testing_date": "28.05.26"},
-            {"mould": 8,   "row_type": "site"},
-            {"mould": 121, "row_type": "site"},
-            {"mould": None,"row_type": "ft",   "age": "F/T", "ft_note": "(15 Adet)"},
-        ],
-    },
-    {
-        "cube_no": 715,
-        "sample_mark": "G26-CON-762",
-        "supplier": "S2A BP",
-        "cmd_code": "7302",
-        "site_location": "B0051 Bridge Km:5+050 S4R Pile No:60 / Pile No:57",
-        "section": "2A",
-        "batch_ticket": 15070,
-        "c_grade": "C30/37",
-        "sampling_date": "26.05.26",
-        "sampled_by": "S.B",
-        "rows": [
-            {"mould": 139, "row_type": "7d",  "age": 7},
-            {"mould": 90,  "row_type": "7d",  "age": 7},
-            {"mould": 157, "row_type": "cmd", "age": 7},
-            {"mould": 136, "row_type": "28d", "age": 28},
-            {"mould": 71,  "row_type": "28d", "age": 28},
-            {"mould": 48,  "row_type": "28d", "age": 28},
-            {"mould": 180, "row_type": "wp",  "age": "WP"},
-            {"mould": 29,  "row_type": "wp",  "age": "WP"},
-            {"mould": 130, "row_type": "wp",  "age": "WP"},
-        ],
-    },
-    {
-        "cube_no": 716,
-        "sample_mark": "G26-CON-763",
-        "supplier": "S2A BP",
-        "cmd_code": "7410",
-        "site_location": "Km:35+935-37+960 Section-1 Irrigation Channel Concrete",
-        "section": 1,
-        "batch_ticket": 15080,
-        "c_grade": "C25/30",
-        "sampling_date": "26.05.26",
-        "sampled_by": "Y.A",
-        "rows": [
-            {"mould": 93,  "row_type": "7d",  "age": 7},
-            {"mould": 138, "row_type": "7d",  "age": 7},
-            {"mould": 24,  "row_type": "cmd", "age": 7},
-            {"mould": 75,  "row_type": "28d", "age": 28},
-            {"mould": 63,  "row_type": "28d", "age": 28},
-            {"mould": 74,  "row_type": "28d", "age": 28},
-        ],
-    },
-]
+BLOCKS = []
 
 
 # ---------------- WRITER ----------------
@@ -1192,11 +742,9 @@ class App:
         self.log(f"Calisma klasoru: {APP_DIR}")
         self.log(f"Python: {sys.version.split()[0]}")
         self.log("")
-        self.log(f"Hazir bloklar ({len(BLOCKS)}): " + ", ".join(str(b['cube_no']) for b in BLOCKS))
-        self.log("")
         self.log("Akis:")
         self.log("  1) 'API Key Ayarla' - Gemini key gir (ilk kez)")
-        self.log("  2) 'PDF SEC + GEMINI ILE OKU' - el yazisi formu yukle, BLOCKS guncellenir")
+        self.log("  2) 'PDF SEC + GEMINI ILE OKU' - el yazisi formu yukle")
         self.log("  3) 'EXCEL'E YAZ' - Excel'de olmayan cube'lari yazar")
         self.log("")
 
@@ -1218,12 +766,12 @@ class App:
 
     def _refresh_info(self):
         key_set = bool(load_api_key())
-        cubes = ", ".join(str(b['cube_no']) for b in BLOCKS) if BLOCKS else "(bos)"
         key_status = "OK" if key_set else "YOK - 'API Key Ayarla' bas"
-        self.info_var.set(
-            f"Hazir bloklar ({len(BLOCKS)}): {cubes}   |   API Key: {key_status}\n"
-            f"PDF okumak icin: 'PDF SEC + GEMINI'.  Yazmak icin: 'EXCEL'E YAZ'  (Excel'de var olanlar atlanir)"
-        )
+        if BLOCKS:
+            line1 = f"PDF'ten okunan {len(BLOCKS)} blok: " + ", ".join(str(b['cube_no']) for b in BLOCKS)
+        else:
+            line1 = "Henuz PDF okunmadi. 'PDF SEC + GEMINI ILE OKU' ile basla."
+        self.info_var.set(f"{line1}\nAPI Key: {key_status}   |   Excel'de var olan cube'lar otomatik atlanir.")
 
     def show_api_key_dialog(self):
         win = tk.Toplevel(self.root)
@@ -1324,6 +872,11 @@ class App:
         excel = self.excel_var.get().strip().strip('"')
         if not excel or not os.path.exists(excel):
             messagebox.showerror("Hata", "Excel dosyasi bulunamadi.")
+            return
+        if not BLOCKS:
+            messagebox.showwarning("Blok yok",
+                "Once 'PDF SEC + GEMINI ILE OKU' ile PDF yukle.\n"
+                "Yazilacak blok yok.")
             return
         if not messagebox.askokcancel("Onay",
                 f"{len(BLOCKS)} blok orijinal Excel'in UZERINE yazilacak.\n\n"
