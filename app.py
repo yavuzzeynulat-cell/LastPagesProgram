@@ -21,10 +21,10 @@ import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk, messagebox
 
 import openpyxl
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -293,7 +293,15 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
     d_cell = ws.cell(row=start_row, column=COL['D'])
     d_cell.value = d_value
     d_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    ws.cell(row=start_row, column=COL['E'], value=block.get('site_location', ''))
+    e_cell = ws.cell(row=start_row, column=COL['E'], value=block.get('site_location', ''))
+    # E column text is RED for newly added blocks so user can spot them at a glance
+    src_font = e_cell.font
+    e_cell.font = Font(
+        name=src_font.name, size=src_font.size,
+        bold=src_font.bold, italic=src_font.italic,
+        family=src_font.family,
+        color='FFFF0000',
+    )
     if block.get('section') is not None:
         ws.cell(row=start_row, column=COL['F'], value=block['section'])
     for bt in batch_tickets:
@@ -327,6 +335,42 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
     return end_row + 1
 
 
+def _excel_recalc_and_save(path, log):
+    """Open the file in Excel via COM, force full recalc, save, close.
+    This restores Excel's formula calculation cache (openpyxl strips it),
+    making the file open at original speed instead of recalculating
+    25k+ rows on every open."""
+    try:
+        import pythoncom
+        from win32com.client import DispatchEx
+    except ImportError:
+        log("Uyari: pywin32 yok, recalc adimi atlandi (dosya yine yazildi).")
+        return
+    pythoncom.CoInitialize()
+    excel = None
+    try:
+        excel = DispatchEx('Excel.Application')
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        excel.ScreenUpdating = False
+        wb = excel.Workbooks.Open(os.path.abspath(path))
+        try:
+            wb.Application.CalculateFull()
+            wb.Save()
+        finally:
+            wb.Close(SaveChanges=False)
+    finally:
+        if excel is not None:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
 def run_writer(excel_path, log):
     log(f"Excel aciliyor: {excel_path}")
     wb = openpyxl.load_workbook(excel_path)
@@ -355,6 +399,12 @@ def run_writer(excel_path, log):
 
     log(f"Kaydediliyor: {excel_path}")
     wb.save(excel_path)
+    log("Excel ile recalc + kaydet (dosyanin hizini geri getirir)...")
+    try:
+        _excel_recalc_and_save(excel_path, log)
+        log("Recalc tamam - dosya artik hizli aciliyor.")
+    except Exception as e:
+        log(f"Uyari: recalc basarisiz ({e}). Veri yazildi ama ilk acilis biraz yavas olabilir.")
     log("Tamamlandi.")
 
 
