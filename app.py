@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -1008,10 +1008,145 @@ def check_for_update(root):
     threading.Thread(target=bg, daemon=True).start()
 
 
-# ---------------- GUI ----------------
+# ---------------- GEMINI PDF READER ----------------
 
 APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG = os.path.join(APP_DIR, "config.txt")
+API_KEY_FILE = os.path.join(APP_DIR, "gemini_api_key.txt")
+
+GEMINI_MODEL = "gemini-2.5-flash"
+
+GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi olarak cikar.
+
+Cube bloklari kutucuklardir; her blok bir "Cube No" satiriyla baslar ve bir sonraki Cube No'ya kadar surer. Tum sayfalardaki butun bloklari sirayla isle.
+
+ROW TYPES:
+- "7d"   : 7-gun testi (Age=7)
+- "cmd"  : CMD satiri (Concrete Mix Design; D sutununda "CMD" yazili, genelde 3. satir)
+- "28d"  : 28-gun testi (Age=28)
+- "wp"   : Waiting Period (Age="WP")
+- "1day" : 1-gun testi (Age=1)
+- "2day" : 2-gun testi (Age=2)
+- "site" : Sahaya gonderilen kupler ("Tested By" sutununda "Site" yazili)
+- "ft"   : F/T ozet satiri (Age="F/T", Load sutununda "(X Adet)" yazili)
+
+Eger bir satirda hem age=1 (1.Day) hem "Site" varsa: row_type="site" + age=1 + testing_date (sampling+1).
+Mould 60 ornek: row_type="site" + age=2 + testing_date.
+
+JSON formati ZORUNLU:
+{
+  "blocks": [
+    {
+      "cube_no": 698,
+      "sample_mark": "G26-CON-743",
+      "supplier": "S2A BP",
+      "cmd_code": "7312",
+      "site_location": "B0051 Bridge Km:5+050 SBL Link Slab",
+      "section": "2A",
+      "batch_ticket": 14958,
+      "c_grade": "C30/37",
+      "sampling_date": "21.05.26",
+      "sampled_by": "Y.A",
+      "rows": [
+        {"mould": 176, "row_type": "7d", "age": 7},
+        {"mould": 9, "row_type": "7d", "age": 7},
+        {"mould": 136, "row_type": "cmd", "age": 7},
+        {"mould": 78, "row_type": "28d", "age": 28},
+        {"mould": 142, "row_type": "28d", "age": 28},
+        {"mould": 106, "row_type": "28d", "age": 28},
+        {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26"},
+        {"mould": 89, "row_type": "site"},
+        {"mould": 8, "row_type": "site"}
+      ]
+    }
+  ]
+}
+
+Multi-batch bloklarda (G sutununda farkli ticket no'lar varsa) batch_ticket yerine batch_tickets kullan:
+"batch_tickets": [
+    {"ticket": 14979, "rows": [0, 5]},
+    {"ticket": 14983, "rows": [6, 11]}
+]
+(rows: o batch'in kapsadigi satir indexleri - blok icinde 0-bazli)
+
+c_grade formati: "C30/37" gibi (basina C ekle).
+sampling_date / testing_date formati: "DD.MM.YY" (orn: "21.05.26").
+F/T satirinda: {"mould": null, "row_type": "ft", "age": "F/T", "ft_note": "(15 Adet)"}.
+
+SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme."""
+
+
+def load_api_key():
+    if os.path.exists(API_KEY_FILE):
+        try:
+            with open(API_KEY_FILE, encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return ""
+
+
+def save_api_key(key):
+    with open(API_KEY_FILE, 'w', encoding='utf-8') as f:
+        f.write(key.strip())
+
+
+def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
+    """Render PDF pages to images, send all to Gemini, parse JSON. Returns blocks list."""
+    import fitz  # pymupdf
+    from PIL import Image
+    from io import BytesIO
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(GEMINI_MODEL)
+
+    log(f"PDF aciliyor: {pdf_path}")
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
+    log(f"Sayfa sayisi: {page_count}")
+
+    images = []
+    for i in range(page_count):
+        if progress_cb:
+            progress_cb(i, page_count, "render")
+        page = doc[i]
+        pm = page.get_pixmap(dpi=200)
+        img = Image.open(BytesIO(pm.tobytes("png")))
+        images.append(img)
+        log(f"  Sayfa {i + 1}/{page_count} render edildi ({img.size[0]}x{img.size[1]})")
+
+    if progress_cb:
+        progress_cb(page_count, page_count, "gemini")
+    log(f"Gemini'ye gonderiliyor ({GEMINI_MODEL}, {page_count} sayfa)...")
+    resp = model.generate_content([GEMINI_PROMPT] + images)
+    text = (resp.text or "").strip()
+
+    # Strip code fences if Gemini ignored instruction
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        log("Gemini gecersiz JSON dondu - ilk 500 karakter:")
+        log(text[:500])
+        raise RuntimeError(f"JSON parse hatasi: {e}")
+
+    if not isinstance(data, dict) or 'blocks' not in data:
+        raise RuntimeError(f"Gemini cevabinda 'blocks' yok. Anahtarlar: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+
+    blocks = data['blocks']
+    log(f"Gemini'den {len(blocks)} blok geldi: {[b.get('cube_no') for b in blocks]}")
+    return blocks
+
+
+# ---------------- GUI ----------------
 
 
 class App:
@@ -1029,14 +1164,16 @@ class App:
 
         btns = ttk.Frame(root, padding=(10, 0))
         btns.pack(fill="x")
+        self.pdf_btn = ttk.Button(btns, text="PDF SEC + GEMINI ILE OKU", command=self.start_pdf_read)
+        self.pdf_btn.pack(side="left")
         self.run_btn = ttk.Button(btns, text="EXCEL'E YAZ", command=self.start_run)
-        self.run_btn.pack(side="left")
+        self.run_btn.pack(side="left", padx=5)
+        ttk.Button(btns, text="API Key Ayarla", command=self.show_api_key_dialog).pack(side="left", padx=5)
         ttk.Button(btns, text="Log temizle", command=self.clear).pack(side="left", padx=5)
 
-        info = ttk.Label(root, padding=(10, 5),
-                         text=f"PDF'ten okunan {len(BLOCKS)} blok hazir: " +
-                              ", ".join(str(b['cube_no']) for b in BLOCKS) +
-                              "  (Excel'de var olanlar otomatik atlanir)")
+        self.info_var = tk.StringVar()
+        self._refresh_info()
+        info = ttk.Label(root, padding=(10, 5), textvariable=self.info_var, wraplength=880, justify="left")
         info.pack(fill="x")
 
         self.output = scrolledtext.ScrolledText(root, wrap="word", font=("Consolas", 10))
@@ -1055,10 +1192,12 @@ class App:
         self.log(f"Calisma klasoru: {APP_DIR}")
         self.log(f"Python: {sys.version.split()[0]}")
         self.log("")
-        self.log("Yazilacak bloklar: " + ", ".join(str(b['cube_no']) for b in BLOCKS))
-        self.log("Excel dosyasini sec, 'EXCEL'E YAZ' bas.")
-        self.log("ONEMLI: yazilan satirlar Concrete sheet'in sonuna eklenir,")
-        self.log("        son bloktan stil + formul kopyalanir.")
+        self.log(f"Hazir bloklar ({len(BLOCKS)}): " + ", ".join(str(b['cube_no']) for b in BLOCKS))
+        self.log("")
+        self.log("Akis:")
+        self.log("  1) 'API Key Ayarla' - Gemini key gir (ilk kez)")
+        self.log("  2) 'PDF SEC + GEMINI ILE OKU' - el yazisi formu yukle, BLOCKS guncellenir")
+        self.log("  3) 'EXCEL'E YAZ' - Excel'de olmayan cube'lari yazar")
         self.log("")
 
     def log(self, msg=""):
@@ -1077,9 +1216,109 @@ class App:
         if path:
             self.excel_var.set(path)
 
+    def _refresh_info(self):
+        key_set = bool(load_api_key())
+        cubes = ", ".join(str(b['cube_no']) for b in BLOCKS) if BLOCKS else "(bos)"
+        key_status = "OK" if key_set else "YOK - 'API Key Ayarla' bas"
+        self.info_var.set(
+            f"Hazir bloklar ({len(BLOCKS)}): {cubes}   |   API Key: {key_status}\n"
+            f"PDF okumak icin: 'PDF SEC + GEMINI'.  Yazmak icin: 'EXCEL'E YAZ'  (Excel'de var olanlar atlanir)"
+        )
+
+    def show_api_key_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.title("Gemini API Key")
+        win.geometry("520x180")
+        win.transient(self.root)
+        win.grab_set()
+        ttk.Label(win, text="Gemini API Key:", padding=10).pack(anchor="w")
+        var = tk.StringVar(value=load_api_key())
+        entry = ttk.Entry(win, textvariable=var, width=70, show="*")
+        entry.pack(padx=10, fill="x")
+        show_var = tk.BooleanVar(value=False)
+
+        def toggle_show():
+            entry.config(show="" if show_var.get() else "*")
+        ttk.Checkbutton(win, text="Goster", variable=show_var, command=toggle_show).pack(anchor="w", padx=10, pady=5)
+        ttk.Label(win, padding=10, foreground="gray",
+                  text="Anahtar yerel olarak gemini_api_key.txt dosyasinda saklanir.\nhttps://aistudio.google.com/apikey adresinden alabilirsin.").pack(anchor="w")
+
+        btn_frame = ttk.Frame(win, padding=10)
+        btn_frame.pack(fill="x")
+
+        def do_save():
+            key = var.get().strip()
+            if not key:
+                messagebox.showwarning("Bos", "API key bos olamaz.", parent=win)
+                return
+            try:
+                save_api_key(key)
+                self.log(f"API key kaydedildi -> {API_KEY_FILE}")
+                self._refresh_info()
+                win.destroy()
+            except Exception as e:
+                messagebox.showerror("Hata", f"Kaydedilemedi: {e}", parent=win)
+
+        ttk.Button(btn_frame, text="Kaydet", command=do_save).pack(side="right")
+        ttk.Button(btn_frame, text="Iptal", command=win.destroy).pack(side="right", padx=5)
+        entry.focus_set()
+
     def set_status(self, txt):
         self.status.config(text=txt)
         self.root.update_idletasks()
+
+    def start_pdf_read(self):
+        api_key = load_api_key()
+        if not api_key:
+            messagebox.showwarning("API Key Yok",
+                "Once 'API Key Ayarla' butonuyla Gemini API key'i gir.")
+            return
+        pdf = filedialog.askopenfilename(
+            title="PDF sec (el yazisi formu)",
+            filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
+        )
+        if not pdf:
+            return
+        self.pdf_btn.config(state="disabled")
+        self.run_btn.config(state="disabled")
+        threading.Thread(target=self._pdf_worker, args=(pdf, api_key), daemon=True).start()
+
+    def _pdf_worker(self, pdf, api_key):
+        global BLOCKS
+        try:
+            self.log("=" * 60)
+            self.log(f"PDF okuma basliyor: {pdf}")
+            self.set_status("Gemini PDF'i okuyor...")
+
+            def progress(cur, total, phase):
+                if phase == "render":
+                    self.set_status(f"Sayfa render: {cur+1}/{total}")
+                elif phase == "gemini":
+                    self.set_status("Gemini API cagriliyor... (bekle)")
+
+            new_blocks = gemini_extract_blocks(pdf, api_key, self.log, progress)
+            if not new_blocks:
+                raise RuntimeError("Gemini hicbir blok dondurmedi.")
+
+            BLOCKS = new_blocks
+            self.log("")
+            self.log(f"BLOCKS guncellendi ({len(BLOCKS)} blok). Detay:")
+            for b in BLOCKS:
+                self.log(f"  cube {b.get('cube_no')}  sample {b.get('sample_mark')}  "
+                         f"{len(b.get('rows', []))} satir  batch {b.get('batch_ticket', b.get('batch_tickets'))}")
+            self.log("")
+            self.log("Simdi 'EXCEL'E YAZ' bas - Excel'de mevcut cube'lar otomatik atlanir.")
+            self._refresh_info()
+            self.set_status("PDF okundu. EXCEL'E YAZ icin hazir.")
+        except Exception as e:
+            self.log("")
+            self.log(f"*** PDF HATA: {e} ***")
+            self.log(traceback.format_exc())
+            self.set_status("PDF okuma hatasi.")
+            messagebox.showerror("PDF Hata", str(e))
+        finally:
+            self.pdf_btn.config(state="normal")
+            self.run_btn.config(state="normal")
 
     def start_run(self):
         excel = self.excel_var.get().strip().strip('"')
@@ -1108,7 +1347,7 @@ class App:
             self.set_status("Bitti.")
             messagebox.showinfo("Bitti",
                 f"Excel guncellendi:\n{excel}\n\n"
-                "Excel'i acip 713-716 bloklarini kontrol et.")
+                "Excel'i acip yeni eklenen bloklari (E sutunu kirmizi) kontrol et.")
         except Exception as e:
             self.log("")
             self.log(f"*** HATA: {e} ***")
