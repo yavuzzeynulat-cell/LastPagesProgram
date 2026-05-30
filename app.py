@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment
 
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -133,7 +133,7 @@ COL = {
     'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15,
     'P': 16, 'Q': 17,
 }
-WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J']  # P handled separately (site rows need individual cells)
+WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J', 'P']  # Q is per-row (site rows write 'Site' there)
 DATE_COLS = ['I', 'K']
 DATE_FORMAT = 'DD/MM/YYYY'
 
@@ -272,13 +272,6 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
             ws.merge_cells(start_row=start_row, end_row=end_row,
                            start_column=COL[col_letter], end_column=COL[col_letter])
 
-    # P column: merge only over rows BEFORE the first site row.
-    # Site rows need individual P cells to write 'Site'.
-    first_site_idx = next((i for i, r in enumerate(rows) if r.get('row_type') == 'site'), n)
-    if first_site_idx >= 2:
-        ws.merge_cells(start_row=start_row, end_row=start_row + first_site_idx - 1,
-                       start_column=COL['P'], end_column=COL['P'])
-
     # D column: SINGLE merge across whole block with multi-line content
     # ("S2A BP\nCMD-XXXX"). Earlier we split into two merges, but the user
     # confirmed it should be one cell with two lines.
@@ -327,7 +320,7 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         if row.get('row_type') == 'ft' and row.get('ft_note'):
             ws.cell(row=r, column=COL['N'], value=row['ft_note'])
         if row.get('row_type') == 'site':
-            ws.cell(row=r, column=COL['P'], value='Site')
+            ws.cell(row=r, column=COL['Q'], value='Site')
         f, src_r = donor_formulas.get('O', (None, None))
         if f:
             ws.cell(row=r, column=COL['O'], value=shift_formula(f, src_r, r))
