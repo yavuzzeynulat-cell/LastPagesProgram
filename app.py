@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment
 
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -221,14 +221,13 @@ def shift_formula(formula, src_row, dst_row):
 
 
 def copy_style(src_cell, dst_cell):
+    # Copy the StyleArray INDEX directly instead of duplicating each
+    # style component (font/fill/border/alignment). Otherwise openpyxl
+    # creates a fresh style entry per cell -> styles.xml explodes ->
+    # Excel becomes very slow on big sheets.
     if not src_cell.has_style:
         return
-    dst_cell.font = copy(src_cell.font)
-    dst_cell.fill = copy(src_cell.fill)
-    dst_cell.border = copy(src_cell.border)
-    dst_cell.alignment = copy(src_cell.alignment)
-    dst_cell.number_format = src_cell.number_format
-    dst_cell.protection = copy(src_cell.protection)
+    dst_cell._style = copy(src_cell._style)
 
 
 def style_position(i, n):
@@ -394,6 +393,7 @@ def _get_latest_release():
 
 
 def _download_file(url, dest_path, progress_cb=None):
+    """Download to dest_path; raise if size mismatch (Content-Length vs written)."""
     req = urllib.request.Request(url, headers={'User-Agent': f'LastPagesApp/{__version__}'})
     with urllib.request.urlopen(req, timeout=60) as resp:
         total = int(resp.headers.get('Content-Length') or 0)
@@ -407,6 +407,11 @@ def _download_file(url, dest_path, progress_cb=None):
                 downloaded += len(chunk)
                 if progress_cb:
                     progress_cb(downloaded, total)
+    actual = os.path.getsize(dest_path)
+    if total and actual != total:
+        raise IOError(f"Indirme eksik: {actual} / {total} bayt")
+    if actual < 1024 * 1024:  # exe should be >1MB
+        raise IOError(f"Indirilen dosya cok kucuk: {actual} bayt (bozuk olabilir)")
 
 
 PS_UPDATER_TEMPLATE = r'''$ErrorActionPreference = "Stop"
@@ -417,16 +422,37 @@ $waited = 0
 while (Get-Process -Id __PID__ -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 500
     $waited += 0.5
-    if ($waited -gt 15) { Log "timeout waiting for app"; break }
+    if ($waited -gt 20) { Log "timeout waiting for app"; break }
 }
-Start-Sleep -Milliseconds 500
+Start-Sleep -Seconds 2  # let Windows fully release file handles
+$newSize = (Get-Item -LiteralPath "__NEW_EXE__").Length
+Log "new exe size: $newSize bytes"
+$copied = $false
+for ($i = 1; $i -le 5; $i++) {
+    try {
+        Copy-Item -LiteralPath "__NEW_EXE__" -Destination "__TARGET_EXE__" -Force
+        $destSize = (Get-Item -LiteralPath "__TARGET_EXE__").Length
+        if ($destSize -ne $newSize) {
+            throw "size mismatch after copy: $destSize vs $newSize"
+        }
+        Log "copied (attempt $i): $destSize bytes -> __TARGET_EXE__"
+        $copied = $true
+        break
+    } catch {
+        Log "copy attempt $i failed: $_"
+        Start-Sleep -Seconds 2
+    }
+}
+if (-not $copied) {
+    Log "ABORT: could not replace exe after 5 attempts; restarting OLD version"
+    Start-Process -FilePath "__TARGET_EXE__"
+    exit 1
+}
 try {
-    Copy-Item -LiteralPath "__NEW_EXE__" -Destination "__TARGET_EXE__" -Force
-    Log "copied new exe -> __TARGET_EXE__"
     Start-Process -FilePath "__TARGET_EXE__"
     Log "restarted"
 } catch {
-    Log "ERROR: $_"
+    Log "ERROR starting new exe: $_"
 }
 '''
 
