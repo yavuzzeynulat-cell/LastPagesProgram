@@ -4,11 +4,16 @@ LastPagesApp - Cube block creator GUI (self-contained).
 Tek dosya: writer + GUI + blok verisi.
 PyInstaller ile .exe yapilir, Python kurmaya gerek yok.
 """
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import traceback
+import urllib.request
 from copy import copy
 from datetime import date, datetime, timedelta
 
@@ -17,6 +22,12 @@ from tkinter import filedialog, scrolledtext, ttk, messagebox
 
 import openpyxl
 from openpyxl.styles import Alignment
+
+
+__version__ = "0.1.5"
+GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_ASSET_NAME = "LastPagesApp.exe"
 
 
 # ---------------- BLOCK DATA (inline; ileride GitHub'tan cekilebilir) ----------------
@@ -355,6 +366,187 @@ def run_writer(excel_path, log):
     log("Tamamlandi.")
 
 
+# ---------------- AUTO-UPDATER ----------------
+
+def _parse_version(s):
+    try:
+        return tuple(int(p) for p in s.lstrip('v').strip().split('.'))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _is_newer(latest, current):
+    a, b = _parse_version(latest), _parse_version(current)
+    return a is not None and b is not None and a > b
+
+
+def _get_latest_release():
+    """Return (tag_no_v, asset_url) or None on any failure."""
+    try:
+        req = urllib.request.Request(
+            RELEASES_API,
+            headers={'User-Agent': f'LastPagesApp/{__version__}'},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.load(resp)
+        tag = data.get('tag_name', '').lstrip('v').strip()
+        if not tag:
+            return None
+        for a in data.get('assets', []):
+            if a.get('name') == UPDATE_ASSET_NAME:
+                return (tag, a.get('browser_download_url'))
+        return None
+    except Exception:
+        return None
+
+
+def _download_file(url, dest_path, progress_cb=None):
+    req = urllib.request.Request(url, headers={'User-Agent': f'LastPagesApp/{__version__}'})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        total = int(resp.headers.get('Content-Length') or 0)
+        downloaded = 0
+        with open(dest_path, 'wb') as f:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if progress_cb:
+                    progress_cb(downloaded, total)
+
+
+PS_UPDATER_TEMPLATE = r'''$ErrorActionPreference = "Stop"
+$log = "__LOG__"
+function Log($msg) { Add-Content -Path $log -Value "$(Get-Date -Format o) $msg" }
+Log "updater started, waiting for pid __PID__"
+$waited = 0
+while (Get-Process -Id __PID__ -ErrorAction SilentlyContinue) {
+    Start-Sleep -Milliseconds 500
+    $waited += 0.5
+    if ($waited -gt 15) { Log "timeout waiting for app"; break }
+}
+Start-Sleep -Milliseconds 500
+try {
+    Copy-Item -LiteralPath "__NEW_EXE__" -Destination "__TARGET_EXE__" -Force
+    Log "copied new exe -> __TARGET_EXE__"
+    Start-Process -FilePath "__TARGET_EXE__"
+    Log "restarted"
+} catch {
+    Log "ERROR: $_"
+}
+'''
+
+
+def _write_powershell_updater(temp_dir, new_exe, target_exe, log_path):
+    ps_path = os.path.join(temp_dir, 'update.ps1')
+    script = (PS_UPDATER_TEMPLATE
+              .replace('__LOG__', log_path)
+              .replace('__PID__', str(os.getpid()))
+              .replace('__NEW_EXE__', new_exe)
+              .replace('__TARGET_EXE__', target_exe))
+    with open(ps_path, 'w', encoding='utf-8') as f:
+        f.write(script)
+    return ps_path
+
+
+def _launch_powershell_updater(ps_path):
+    # CREATE_NO_WINDOW = 0x08000000 — helper runs silently
+    subprocess.Popen(
+        ['powershell', '-ExecutionPolicy', 'Bypass',
+         '-WindowStyle', 'Hidden', '-File', ps_path],
+        creationflags=0x08000000,
+    )
+
+
+def _do_update(root, asset_url, new_tag):
+    """Tk thread: download into temp, launch helper, exit app."""
+    target_exe = sys.executable if getattr(sys, 'frozen', False) else None
+    if not target_exe or not target_exe.lower().endswith('.exe'):
+        messagebox.showinfo("Guncelleme",
+            "Otomatik guncelleme sadece .exe surumde calisir.\n"
+            "Mevcut versiyonla devam ediliyor.")
+        return
+
+    temp_dir = os.path.join(tempfile.gettempdir(), 'lastpages_update')
+    try:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        os.makedirs(temp_dir, exist_ok=True)
+    except Exception as e:
+        messagebox.showerror("Guncelleme hatasi", f"Temp klasor olusturulamadi: {e}")
+        return
+
+    new_exe = os.path.join(temp_dir, UPDATE_ASSET_NAME)
+    log_path = os.path.join(temp_dir, 'update.log')
+
+    win = tk.Toplevel(root)
+    win.title("Guncelleniyor")
+    win.geometry("420x110")
+    win.transient(root)
+    win.grab_set()
+    win.protocol("WM_DELETE_WINDOW", lambda: None)
+    ttk.Label(win, text=f"v{new_tag} indiriliyor...", padding=10).pack()
+    bar = ttk.Progressbar(win, length=380, mode='determinate', maximum=100)
+    bar.pack(padx=20, pady=5)
+    pct = ttk.Label(win, text="0%")
+    pct.pack()
+
+    state = {'err': None}
+
+    def progress(d, t):
+        def update():
+            if t:
+                bar['maximum'] = t
+                bar['value'] = d
+                pct.config(text=f"{int(d * 100 / t)}%  ({d // 1024} / {t // 1024} KB)")
+            else:
+                pct.config(text=f"{d // 1024} KB")
+        root.after(0, update)
+
+    def worker():
+        try:
+            _download_file(asset_url, new_exe, progress)
+        except Exception as e:
+            state['err'] = str(e)
+        root.after(0, finish)
+
+    def finish():
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        if state['err']:
+            messagebox.showerror("Guncelleme hatasi",
+                f"Indirme basarisiz:\n{state['err']}\n\nMevcut versiyonla devam ediliyor.")
+            return
+        ps_path = _write_powershell_updater(temp_dir, new_exe, target_exe, log_path)
+        _launch_powershell_updater(ps_path)
+        root.destroy()
+        sys.exit(0)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def check_for_update(root):
+    """Background-check GitHub, prompt on Tk thread if newer."""
+    def bg():
+        result = _get_latest_release()
+        if not result:
+            return
+        latest_tag, asset_url = result
+        if not asset_url or not _is_newer(latest_tag, __version__):
+            return
+        def prompt():
+            if messagebox.askyesno("Guncelleme mevcut",
+                f"Yeni versiyon v{latest_tag} mevcut.\n"
+                f"Mevcut: v{__version__}\n\n"
+                "Simdi guncellemek ister misin?"):
+                _do_update(root, asset_url, latest_tag)
+        root.after(0, prompt)
+    threading.Thread(target=bg, daemon=True).start()
+
+
 # ---------------- GUI ----------------
 
 APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -364,7 +556,7 @@ CONFIG = os.path.join(APP_DIR, "config.txt")
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Last Pages - Cube Block Creator")
+        root.title(f"Last Pages - Cube Block Creator  (v{__version__})")
         root.geometry("900x650")
 
         top = ttk.Frame(root, padding=10)
@@ -468,6 +660,7 @@ class App:
 def main():
     root = tk.Tk()
     App(root)
+    root.after(800, lambda: check_for_update(root))
     root.mainloop()
 
 
