@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -641,38 +641,12 @@ def save_api_key(key):
         f.write(key.strip())
 
 
-def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
-    """Render PDF pages to images, send all to Gemini, parse JSON. Returns blocks list."""
-    import fitz  # pymupdf
-    from PIL import Image
-    from io import BytesIO
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL)
-
-    log(f"PDF aciliyor: {pdf_path}")
-    doc = fitz.open(pdf_path)
-    page_count = len(doc)
-    log(f"Sayfa sayisi: {page_count}")
-
-    images = []
-    for i in range(page_count):
-        if progress_cb:
-            progress_cb(i, page_count, "render")
-        page = doc[i]
-        pm = page.get_pixmap(dpi=200)
-        img = Image.open(BytesIO(pm.tobytes("png")))
-        images.append(img)
-        log(f"  Sayfa {i + 1}/{page_count} render edildi ({img.size[0]}x{img.size[1]})")
-
-    if progress_cb:
-        progress_cb(page_count, page_count, "gemini")
-    log(f"Gemini'ye gonderiliyor ({GEMINI_MODEL}, {page_count} sayfa)...")
-    resp = model.generate_content([GEMINI_PROMPT] + images)
-    text = (resp.text or "").strip()
-
-    # Strip code fences if Gemini ignored instruction
+def _parse_gemini_json(text, log):
+    """Tolerantly parse Gemini response into a list of blocks."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    # Strip markdown code fences (model sometimes ignores instruction)
     if text.startswith("```"):
         parts = text.split("```")
         if len(parts) >= 2:
@@ -680,20 +654,139 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
             if text.startswith("json"):
                 text = text[4:]
             text = text.strip()
-
+    # Best-effort: find first '{' and last '}' to skip any pre/post text
+    first = text.find('{')
+    last = text.rfind('}')
+    if first > 0 or (last >= 0 and last < len(text) - 1):
+        candidate = text[first:last + 1] if first >= 0 and last > first else text
+    else:
+        candidate = text
     try:
-        data = json.loads(text)
+        data = json.loads(candidate)
     except json.JSONDecodeError as e:
-        log("Gemini gecersiz JSON dondu - ilk 500 karakter:")
-        log(text[:500])
+        log("Gemini gecersiz JSON dondu - ilk 800 karakter:")
+        log(text[:800])
         raise RuntimeError(f"JSON parse hatasi: {e}")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get('blocks', []) or []
+    return []
 
-    if not isinstance(data, dict) or 'blocks' not in data:
-        raise RuntimeError(f"Gemini cevabinda 'blocks' yok. Anahtarlar: {list(data.keys()) if isinstance(data, dict) else type(data)}")
 
-    blocks = data['blocks']
-    log(f"Gemini'den {len(blocks)} blok geldi: {[b.get('cube_no') for b in blocks]}")
-    return blocks
+def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
+    """Render PDF pages and extract blocks via Gemini.
+
+    Robust strategy (504 DeadlineExceeded'i onlemek icin):
+      1) Sayfa basina ayri istek - kucuk payload, hizli yanit
+      2) Her istegin timeout'u 300sn (default cok kisa)
+      3) Hata olursa 3x retry, exponential backoff (1, 2, 4 sn)
+      4) Image hala buyukse DPI dusur (200 -> 150 -> 120)
+      5) Sayfalar arasi cube_no dedup
+    """
+    import time
+    import fitz  # pymupdf
+    from PIL import Image
+    from io import BytesIO
+    import google.generativeai as genai
+    from google.api_core import exceptions as gax
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    request_options = {"timeout": 300}  # 5 dk per request
+
+    log(f"PDF aciliyor: {pdf_path}")
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
+    log(f"Sayfa sayisi: {page_count}")
+    if page_count == 0:
+        raise RuntimeError("PDF bos.")
+
+    def render_page(page, dpi):
+        pm = page.get_pixmap(dpi=dpi)
+        png_bytes = pm.tobytes("png")
+        img = Image.open(BytesIO(png_bytes))
+        img.load()  # decode into memory now (BytesIO is closed after)
+        return img, len(png_bytes)
+
+    def call_with_retries(prompt_parts, max_attempts=3):
+        last_err = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = model.generate_content(prompt_parts, request_options=request_options)
+                return resp
+            except gax.DeadlineExceeded as e:
+                last_err = e
+                wait = 2 ** (attempt - 1)  # 1, 2, 4
+                log(f"    timeout deneme {attempt}/{max_attempts}, {wait}s bekleniyor...")
+                if attempt < max_attempts:
+                    time.sleep(wait)
+            except (gax.ResourceExhausted, gax.ServiceUnavailable, gax.InternalServerError) as e:
+                last_err = e
+                wait = 2 ** (attempt - 1)
+                log(f"    sunucu hatasi ({type(e).__name__}) deneme {attempt}/{max_attempts}, {wait}s bekleniyor...")
+                if attempt < max_attempts:
+                    time.sleep(wait)
+            except gax.InvalidArgument as e:
+                # bad request (image too big, prompt invalid) - retry useless
+                raise
+            except Exception as e:
+                last_err = e
+                if attempt < max_attempts:
+                    log(f"    hata ({type(e).__name__}) deneme {attempt}/{max_attempts}, 1s bekleniyor...")
+                    time.sleep(1)
+        raise last_err if last_err else RuntimeError("Bilinmeyen hata")
+
+    all_blocks = []
+    for i in range(page_count):
+        if progress_cb:
+            progress_cb(i, page_count, "page")
+        log(f"Sayfa {i + 1}/{page_count}: islem basliyor")
+        page = doc[i]
+        page_blocks = None
+        last_err = None
+        for dpi in (200, 150, 120):
+            try:
+                img, png_size = render_page(page, dpi)
+                log(f"  render dpi={dpi} -> {img.size[0]}x{img.size[1]}, {png_size // 1024} KB")
+                resp = call_with_retries([GEMINI_PROMPT, img])
+                page_blocks = _parse_gemini_json(resp.text, log)
+                log(f"  -> {len(page_blocks)} blok: {[b.get('cube_no') for b in page_blocks]}")
+                break  # bu DPI calisti, sonraki sayfaya gec
+            except gax.InvalidArgument as e:
+                # genelde payload too large - dpi dusurup tekrar dene
+                last_err = e
+                log(f"  dpi={dpi} reddedildi (InvalidArgument), dusuk DPI denenecek")
+                continue
+            except gax.DeadlineExceeded as e:
+                last_err = e
+                log(f"  dpi={dpi} timeout (3 deneme sonrasi), dusuk DPI denenecek")
+                continue
+            except Exception as e:
+                # unexpected: abort this page rather than infinite loop
+                last_err = e
+                log(f"  dpi={dpi} hata: {type(e).__name__}: {e}")
+                break
+
+        if page_blocks is None:
+            raise RuntimeError(f"Sayfa {i + 1} okunamadi. Son hata: {type(last_err).__name__}: {last_err}")
+
+        all_blocks.extend(page_blocks)
+
+    # Dedup by cube_no (sayfalar arasi tekrarsa)
+    seen = set()
+    unique = []
+    for b in all_blocks:
+        cn = b.get('cube_no')
+        if cn is None or cn in seen:
+            if cn in seen:
+                log(f"Tekrar eden cube_no atlandi: {cn}")
+            continue
+        seen.add(cn)
+        unique.append(b)
+
+    log(f"Toplam {len(unique)} essiz blok cikarildi: {sorted(seen)}")
+    return unique
 
 
 # ---------------- GUI ----------------
@@ -839,10 +932,12 @@ class App:
             self.set_status("Gemini PDF'i okuyor...")
 
             def progress(cur, total, phase):
-                if phase == "render":
+                if phase == "page":
+                    self.set_status(f"Gemini sayfa {cur+1}/{total}...")
+                elif phase == "render":
                     self.set_status(f"Sayfa render: {cur+1}/{total}")
                 elif phase == "gemini":
-                    self.set_status("Gemini API cagriliyor... (bekle)")
+                    self.set_status("Gemini API cagriliyor...")
 
             new_blocks = gemini_extract_blocks(pdf, api_key, self.log, progress)
             if not new_blocks:
