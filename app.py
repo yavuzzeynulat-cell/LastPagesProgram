@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -623,7 +623,9 @@ c_grade formati: "C30/37" gibi (basina C ekle).
 sampling_date / testing_date formati: "DD.MM.YY" (orn: "21.05.26").
 F/T satirinda: {"mould": null, "row_type": "ft", "age": "F/T", "ft_note": "(15 Adet)"}.
 
-SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme."""
+SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme.
+JSON'i COMPACT yaz (indent yok, satir sonu yok, ekstra bosluk yok) - token tasarrufu icin.
+Cevap mutlaka } ile bitmeli (yarida kesilmis JSON olmasin)."""
 
 
 def load_api_key():
@@ -642,7 +644,7 @@ def save_api_key(key):
 
 
 def _parse_gemini_json(text, log):
-    """Tolerantly parse Gemini response into a list of blocks."""
+    """Tolerantly parse Gemini response. Returns list of blocks."""
     text = (text or "").strip()
     if not text:
         return []
@@ -654,18 +656,27 @@ def _parse_gemini_json(text, log):
             if text.startswith("json"):
                 text = text[4:]
             text = text.strip()
-    # Best-effort: find first '{' and last '}' to skip any pre/post text
+    # Best-effort: find first '{'/last '}' to skip any pre/post text
     first = text.find('{')
     last = text.rfind('}')
-    if first > 0 or (last >= 0 and last < len(text) - 1):
-        candidate = text[first:last + 1] if first >= 0 and last > first else text
-    else:
-        candidate = text
+    candidate = text[first:last + 1] if first >= 0 and last > first else text
+    # Truncation detection: response should end with '}' or ']'
+    stripped_tail = candidate.rstrip()
+    truncated = not stripped_tail.endswith(('}', ']'))
     try:
         data = json.loads(candidate)
     except json.JSONDecodeError as e:
-        log("Gemini gecersiz JSON dondu - ilk 800 karakter:")
-        log(text[:800])
+        log(f"Gemini JSON parse hatasi @ {e.pos} (toplam {len(text)} karakter)")
+        log("--- ILK 400 KARAKTER ---")
+        log(text[:400])
+        log("--- SON 400 KARAKTER ---")
+        log(text[-400:])
+        if truncated:
+            raise RuntimeError(
+                "Gemini cevabi YARIDA KESILDI. Bu sayfada cok fazla blok/satir var, "
+                "max_output_tokens limit asilmis olabilir. "
+                f"Cevap '{stripped_tail[-30:]!r}' ile bitiyor (kapatici parantez bekleniyordu)."
+            )
         raise RuntimeError(f"JSON parse hatasi: {e}")
     if isinstance(data, list):
         return data
@@ -692,7 +703,12 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
     from google.api_core import exceptions as gax
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL)
+    generation_config = {
+        "response_mime_type": "application/json",  # saf JSON, markdown yok
+        "max_output_tokens": 32768,                # default ~8k yetmiyor, complex bloklarda truncate olur
+        "temperature": 0.0,                        # deterministic
+    }
+    model = genai.GenerativeModel(GEMINI_MODEL, generation_config=generation_config)
     request_options = {"timeout": 300}  # 5 dk per request
 
     log(f"PDF aciliyor: {pdf_path}")
