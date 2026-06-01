@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -208,7 +208,11 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
                        start_column=COL['D'], end_column=COL['D'])
 
     for bt in batch_tickets:
-        a, b = bt['rows']
+        # rows: yarat hem [start,end] hem tam liste [0,1,2,3] gelebilir - min/max al
+        r = bt.get('rows') or []
+        if not r:
+            continue
+        a, b = min(r), max(r)
         if b > a:
             ws.merge_cells(start_row=start_row + a, end_row=start_row + b,
                            start_column=COL['G'], end_column=COL['G'])
@@ -234,7 +238,10 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
     if block.get('section') is not None:
         ws.cell(row=start_row, column=COL['F'], value=block['section'])
     for bt in batch_tickets:
-        ws.cell(row=start_row + bt['rows'][0], column=COL['G'], value=bt['ticket'])
+        r = bt.get('rows') or []
+        if not r:
+            continue
+        ws.cell(row=start_row + min(r), column=COL['G'], value=bt.get('ticket'))
     ws.cell(row=start_row, column=COL['H'], value=block.get('c_grade', ''))
     ws.cell(row=start_row, column=COL['J'], value=block.get('sampled_by', ''))
 
@@ -617,7 +624,9 @@ Multi-batch bloklarda (G sutununda farkli ticket no'lar varsa) batch_ticket yeri
     {"ticket": 14979, "rows": [0, 5]},
     {"ticket": 14983, "rows": [6, 11]}
 ]
-(rows: o batch'in kapsadigi satir indexleri - blok icinde 0-bazli)
+ONEMLI: "rows" alani TAM OLARAK iki sayi olmali: [ilk_satir_index, son_satir_index].
+ASLA [0,1,2,3,4,5] gibi tam liste verme - sadece [first, last] iki eleman.
+Satir indexleri blok icinde 0-bazli (blogun ilk satiri = 0).
 
 c_grade formati: "C30/37" gibi (basina C ekle).
 sampling_date / testing_date formati: "DD.MM.YY" (orn: "21.05.26").
@@ -641,6 +650,84 @@ def load_api_key():
 def save_api_key(key):
     with open(API_KEY_FILE, 'w', encoding='utf-8') as f:
         f.write(key.strip())
+
+
+def _normalize_block(b, log):
+    """Defensive normalizer: Gemini'nin sasirtici formatlarini standartlastir.
+    Yan etki: blok dict'i in-place duzenler ve dondurur (ya da None drop)."""
+    if not isinstance(b, dict):
+        log(f"  uyari: blok dict degil ({type(b).__name__}), atlandi")
+        return None
+
+    # cube_no: int olmali
+    try:
+        b['cube_no'] = int(b['cube_no'])
+    except (KeyError, ValueError, TypeError):
+        log(f"  uyari: gecersiz cube_no={b.get('cube_no')!r}, blok atlandi")
+        return None
+
+    # rows: list olmali
+    rows = b.get('rows')
+    if not isinstance(rows, list) or len(rows) == 0:
+        log(f"  uyari: cube {b['cube_no']} bos/gecersiz rows, atlandi")
+        return None
+
+    # Her row'u temizle
+    cleaned_rows = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        # mould: int veya None
+        m = r.get('mould')
+        if m is None or m == "" or m == "null":
+            r['mould'] = None
+        else:
+            try:
+                r['mould'] = int(m)
+            except (ValueError, TypeError):
+                r['mould'] = None
+        # row_type: lower-case
+        rt = r.get('row_type')
+        if isinstance(rt, str):
+            r['row_type'] = rt.lower().strip()
+        # age: int / str / left as is
+        cleaned_rows.append(r)
+    b['rows'] = cleaned_rows
+    n = len(cleaned_rows)
+
+    # batch_tickets normalize: [start,end] veya tam liste her ikisini de kabul et
+    if b.get('batch_tickets'):
+        new_bts = []
+        for bt in b['batch_tickets']:
+            if not isinstance(bt, dict):
+                continue
+            r = bt.get('rows') or []
+            if isinstance(r, int):
+                r = [r]
+            if not r:
+                continue
+            try:
+                a, c = int(min(r)), int(max(r))
+            except (ValueError, TypeError):
+                continue
+            # range clip [0, n-1]
+            a = max(0, min(a, n - 1))
+            c = max(0, min(c, n - 1))
+            new_bts.append({'ticket': bt.get('ticket'), 'rows': [a, c]})
+        b['batch_tickets'] = new_bts
+        if not new_bts and 'batch_ticket' not in b:
+            log(f"  uyari: cube {b['cube_no']} batch_tickets bos kaldi")
+
+    # batch_ticket tek: int olmasi guzel ama string de olabilir, dokunma
+
+    # section: int veya str olabilir, dokunma
+    # c_grade: basinda C yoksa ekle
+    cg = b.get('c_grade')
+    if isinstance(cg, str) and cg and not cg.upper().startswith('C'):
+        b['c_grade'] = 'C' + cg
+
+    # sample_mark, sampling_date, sampled_by, supplier, cmd_code, site_location: as-is
+    return b
 
 
 def _parse_gemini_json(text, log):
@@ -789,17 +876,20 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
 
         all_blocks.extend(page_blocks)
 
-    # Dedup by cube_no (sayfalar arasi tekrarsa)
+    # Normalize + dedup by cube_no
     seen = set()
     unique = []
-    for b in all_blocks:
-        cn = b.get('cube_no')
-        if cn is None or cn in seen:
-            if cn in seen:
-                log(f"Tekrar eden cube_no atlandi: {cn}")
+    log("Normalize ediliyor...")
+    for raw in all_blocks:
+        nb = _normalize_block(raw, log)
+        if nb is None:
+            continue
+        cn = nb['cube_no']
+        if cn in seen:
+            log(f"  tekrar eden cube_no atlandi: {cn}")
             continue
         seen.add(cn)
-        unique.append(b)
+        unique.append(nb)
 
     log(f"Toplam {len(unique)} essiz blok cikarildi: {sorted(seen)}")
     return unique
