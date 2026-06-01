@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -578,6 +578,12 @@ GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi o
 
 Cube bloklari kutucuklardir; her blok bir "Cube No" satiriyla baslar ve bir sonraki Cube No'ya kadar surer. Tum sayfalardaki butun bloklari sirayla isle.
 
+ONEMLI - SAYFALAR ARASI BOLUNMUS BLOKLAR:
+- Bir cube blogu iki sayfa arasinda bolunmus olabilir (yarisi 1. sayfanin sonunda, devami 2. sayfanin basinda)
+- Bu durumda bloku TEK blok olarak cikar - hem ust hem alt satirlari ayni "rows" listesinde birlestir
+- 2. sayfanin basindaki rows'un cube_no'su yoktur (ust kisimda kalmistir) - 1. sayfada gordugun son cube_no ile esle
+- ASLA ayri iki blok yapma; ayni cube_no'ya ait satirlar tek blok olmali
+
 ROW TYPES:
 - "7d"   : 7-gun testi (Age=7)
 - "cmd"  : CMD satiri (Concrete Mix Design; D sutununda "CMD" yazili, genelde 3. satir)
@@ -869,36 +875,36 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
     # Tum sayfalari onceden render et.
     # ONEMLI: DPI degil PIXEL hedefliyoruz. Gemini'nin vision encoder'i icinde
     # 1568px patch'lere boluyor - 2500px sweet spot (yeterli detay + hizli).
-    # Eskiden 200 DPI sabitti -> 7128x4962 = 19MB image, Gemini icinden resize
-    # ediyordu (zaman kaybi). Simdi 2500px hedef = optimum Gemini quality.
-    TARGET_MAX_PX = 2500   # baslangic - hizli + yuksek detay
-    FALLBACK_MAX_PX = 3500  # InvalidArgument olursa daha yuksek (nadiren)
+    TARGET_MAX_PX = 2500
+    FALLBACK_MAX_PX = 3500
 
     def render_at_target(page, max_px):
-        """Sayfanin max boyutu max_px olacak sekilde DPI ayarla ve render et."""
         rect = page.rect
         max_pt = max(rect.width, rect.height)
         if max_pt <= 0:
             target_dpi = 150
         else:
             target_dpi = (max_px * 72.0) / max_pt
-        target_dpi = max(100, min(target_dpi, 300))  # makul aralik
+        target_dpi = max(100, min(target_dpi, 300))
         pm = page.get_pixmap(dpi=target_dpi)
         return pm.tobytes("png"), pm.width, pm.height, int(round(target_dpi))
 
-    log(f"Sayfalar render ediliyor (hedef max {TARGET_MAX_PX}px - Gemini optimum)...")
-    rendered = {}  # page_idx -> (img_bytes, w, h, dpi)
+    log(f"Sayfalar render ediliyor (hedef max {TARGET_MAX_PX}px)...")
+    rendered = {}
+    total_kb = 0
     for i in range(page_count):
         page = doc[i]
         png_bytes, w, h, used_dpi = render_at_target(page, TARGET_MAX_PX)
         rendered[i] = (png_bytes, w, h, used_dpi)
+        total_kb += len(png_bytes) // 1024
         log(f"  sayfa {i + 1}/{page_count}: {w}x{h} @ dpi={used_dpi}, {len(png_bytes) // 1024} KB")
+    log(f"Toplam payload: {total_kb} KB (eskiden ~95 MB idi - cok kucuk)")
 
     log("")
-    log(f"PARALEL Gemini cagrisi - {page_count} sayfa ayni anda...")
-    log("(her sayfa 15-30sn surer, paralel oldugu icin toplam ~30-60sn beklenir)")
+    log(f"TEK Gemini cagrisi - {page_count} sayfa birlikte (sayfalar arasi bloklari yakalar)")
+    log("(toplam ~60-90sn beklenir, timeout 300sn)")
 
-    def call_with_retries(prompt_parts, max_attempts=3, page_num=0):
+    def call_with_retries(prompt_parts, max_attempts=3):
         last_err = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -907,7 +913,7 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
                     gax.ServiceUnavailable, gax.InternalServerError) as e:
                 last_err = e
                 wait = 2 ** (attempt - 1)
-                log(f"  [sayfa {page_num}] {type(e).__name__} deneme {attempt}/{max_attempts}, {wait}s bekle")
+                log(f"  {type(e).__name__} deneme {attempt}/{max_attempts}, {wait}s bekle")
                 if attempt < max_attempts:
                     time.sleep(wait)
             except gax.InvalidArgument:
@@ -918,65 +924,70 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
                     time.sleep(1)
         raise last_err if last_err else RuntimeError("Bilinmeyen hata")
 
-    def process_page(idx):
-        """Tek sayfayi Gemini'ye yolla, blocks dondur. Pixel-fallback'li."""
-        png_bytes, w, h, used_dpi = rendered[idx]
+    def process_page_solo(idx):
+        """Fallback: tek sayfayi Gemini'ye yolla."""
+        png_bytes = rendered[idx][0]
+        img = Image.open(BytesIO(png_bytes)); img.load()
         last_err = None
-        # 1. denemede pre-rendered (2500px) ile; basarisizsa daha yuksek detayla
-        attempts = [(TARGET_MAX_PX, png_bytes), (FALLBACK_MAX_PX, None)]
-        for target_px, source in attempts:
+        for target_px, source in [(TARGET_MAX_PX, png_bytes), (FALLBACK_MAX_PX, None)]:
             try:
                 if source is None:
                     fresh, _, _, _ = render_at_target(doc[idx], target_px)
-                    img = Image.open(BytesIO(fresh)); img.load()
+                    img2 = Image.open(BytesIO(fresh)); img2.load()
                 else:
-                    img = Image.open(BytesIO(source)); img.load()
-                resp = call_with_retries([GEMINI_PROMPT, img], page_num=idx + 1)
-                page_blocks = _parse_gemini_json(resp.text, log)
-                log(f"  [sayfa {idx + 1}] max_px={target_px} -> {len(page_blocks)} blok: "
-                    f"{[b.get('cube_no') for b in page_blocks]}")
-                return idx, page_blocks
+                    img2 = img
+                resp = call_with_retries([GEMINI_PROMPT, img2])
+                blocks = _parse_gemini_json(resp.text, log)
+                log(f"  [sayfa {idx + 1}] max_px={target_px} -> {len(blocks)} blok")
+                return idx, blocks
             except gax.InvalidArgument as e:
                 last_err = e
-                log(f"  [sayfa {idx + 1}] max_px={target_px} reddedildi: {e}")
                 continue
-            except RuntimeError as e:
-                # parse hatasi (truncation) - dpi degisikligi cozmez
-                last_err = e
-                raise
             except Exception as e:
                 last_err = e
-                log(f"  [sayfa {idx + 1}] max_px={target_px} hata: {type(e).__name__}: {e}")
-                continue
-        raise RuntimeError(f"Sayfa {idx + 1} okunamadi: {last_err}")
+                break
+        raise RuntimeError(f"Sayfa {idx + 1}: {last_err}")
 
-    all_blocks_by_page = {}
-    with ThreadPoolExecutor(max_workers=min(page_count, 4)) as pool:
-        future_to_idx = {pool.submit(process_page, i): i for i in range(page_count)}
-        completed = 0
-        for fut in as_completed(future_to_idx):
-            idx = future_to_idx[fut]
-            try:
-                page_idx, blocks = fut.result()
-                all_blocks_by_page[page_idx] = blocks
-            except Exception as e:
-                log(f"  [sayfa {idx + 1}] BASARISIZ: {e}")
-                # Diger sayfalar devam etsin, en sonda error toplanir
-                all_blocks_by_page[idx] = None
-            completed += 1
-            if progress_cb:
-                progress_cb(completed - 1, page_count, "page")
-            log(f"  (ilerleme: {completed}/{page_count} sayfa tamam)")
-
-    # Hatali sayfa var mi
-    failed = [i + 1 for i, b in all_blocks_by_page.items() if b is None]
-    if failed:
-        raise RuntimeError(f"Sayfa(lar) okunamadi: {failed}")
-
-    # Sayfa sirasiyla birlestir
-    all_blocks = []
+    # ASIL CAGRI: Tum sayfalar TEK request (sayfa sinirlarini yakalar)
+    if progress_cb:
+        progress_cb(0, 1, "gemini")
+    img_list = []
     for i in range(page_count):
-        all_blocks.extend(all_blocks_by_page.get(i, []))
+        img = Image.open(BytesIO(rendered[i][0])); img.load()
+        img_list.append(img)
+
+    log("Istek gonderiliyor (tek call - tum sayfalar)...")
+    all_blocks = None
+    try:
+        resp = call_with_retries([GEMINI_PROMPT] + img_list)
+        all_blocks = _parse_gemini_json(resp.text, log)
+        log(f"Tek-call basarili: {len(all_blocks)} blok")
+    except (gax.InvalidArgument, RuntimeError) as e:
+        # Cok blok varsa response truncate olabilir, ya da payload buyuk olabilir
+        # Fallback: sayfa basina paralel
+        log(f"Tek-call basarisiz ({type(e).__name__}: {e})")
+        log("FALLBACK: sayfa basina paralel (sayfa sinirlari kac olabilir)")
+        all_blocks_by_page = {}
+        with ThreadPoolExecutor(max_workers=min(page_count, 4)) as pool:
+            future_to_idx = {pool.submit(process_page_solo, i): i for i in range(page_count)}
+            done = 0
+            for fut in as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                try:
+                    page_idx, blocks = fut.result()
+                    all_blocks_by_page[page_idx] = blocks
+                except Exception as ex:
+                    log(f"  [sayfa {idx + 1}] FAIL: {ex}")
+                    all_blocks_by_page[idx] = None
+                done += 1
+                if progress_cb:
+                    progress_cb(done - 1, page_count, "page")
+        failed = [i + 1 for i, b in all_blocks_by_page.items() if b is None]
+        if failed:
+            raise RuntimeError(f"Sayfa(lar) okunamadi: {failed}")
+        all_blocks = []
+        for i in range(page_count):
+            all_blocks.extend(all_blocks_by_page.get(i, []))
 
     # Normalize + dedup by cube_no
     seen = set()
