@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -570,6 +570,7 @@ def check_for_update(root):
 APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG = os.path.join(APP_DIR, "config.txt")
 API_KEY_FILE = os.path.join(APP_DIR, "gemini_api_key.txt")
+CACHE_DIR = os.path.join(APP_DIR, "gemini_cache")
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
@@ -635,6 +636,47 @@ F/T satirinda: {"mould": null, "row_type": "ft", "age": "F/T", "ft_note": "(15 A
 SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme.
 JSON'i COMPACT yaz (indent yok, satir sonu yok, ekstra bosluk yok) - token tasarrufu icin.
 Cevap mutlaka } ile bitmeli (yarida kesilmis JSON olmasin)."""
+
+
+def _pdf_content_hash(path):
+    """SHA256 of file content - kisa hex (16 char) doner. PDF degisirse cache invalid."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+def cache_load(pdf_hash):
+    """Var ise blocks list'i dondurur, yoksa None."""
+    path = os.path.join(CACHE_DIR, f"{pdf_hash}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def cache_save(pdf_hash, blocks, pdf_path):
+    """Cache'e yaz."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        # Metadata icin yardimci dosya
+        data = {
+            "pdf_name": os.path.basename(pdf_path),
+            "pdf_hash": pdf_hash,
+            "saved_at": datetime.now().isoformat(timespec='seconds'),
+            "block_count": len(blocks),
+            "blocks": blocks,
+        }
+        path = os.path.join(CACHE_DIR, f"{pdf_hash}.json")
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 def load_api_key():
@@ -772,16 +814,33 @@ def _parse_gemini_json(text, log):
     return []
 
 
-def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
+def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False):
     """Render PDF pages and extract blocks via Gemini.
 
-    Robust strategy (504 DeadlineExceeded'i onlemek icin):
+    CACHE: Once PDF'in SHA256'sini bulup gemini_cache/<hash>.json'a bakar.
+    Hit ise Gemini hic cagrilmaz (PARA TASARRUFU). force=True ile bypass.
+
+    Robust strategy:
       1) Sayfa basina ayri istek - kucuk payload, hizli yanit
-      2) Her istegin timeout'u 300sn (default cok kisa)
+      2) Her istegin timeout'u 300sn
       3) Hata olursa 3x retry, exponential backoff (1, 2, 4 sn)
       4) Image hala buyukse DPI dusur (200 -> 150 -> 120)
-      5) Sayfalar arasi cube_no dedup
+      5) Sayfalar arasi cube_no dedup + normalize
     """
+    # CACHE check
+    pdf_hash = _pdf_content_hash(pdf_path)
+    log(f"PDF hash: {pdf_hash}")
+    if not force:
+        cached = cache_load(pdf_hash)
+        if cached is not None:
+            blocks = cached.get('blocks') if isinstance(cached, dict) else cached
+            if isinstance(blocks, list) and blocks:
+                log(f"*** CACHE HIT *** - {len(blocks)} blok daha onceden okunmustu.")
+                log(f"  Gemini cagrilmiyor (PARA TASARRUFU). Cube_no'lar: {[b.get('cube_no') for b in blocks]}")
+                log(f"  Yeniden okumak istersen cache dosyasini sil: {CACHE_DIR}\\{pdf_hash}.json")
+                return blocks
+        log("Cache miss - Gemini cagrilacak.")
+
     import time
     import fitz  # pymupdf
     from PIL import Image
@@ -892,6 +951,9 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None):
         unique.append(nb)
 
     log(f"Toplam {len(unique)} essiz blok cikarildi: {sorted(seen)}")
+    # Cache'e kaydet (sonraki ayni PDF'te Gemini cagrilmasin)
+    cache_save(pdf_hash, unique, pdf_path)
+    log(f"Cache kaydedildi: {CACHE_DIR}\\{pdf_hash}.json")
     return unique
 
 
@@ -918,6 +980,7 @@ class App:
         self.run_btn = ttk.Button(btns, text="EXCEL'E YAZ", command=self.start_run)
         self.run_btn.pack(side="left", padx=5)
         ttk.Button(btns, text="API Key Ayarla", command=self.show_api_key_dialog).pack(side="left", padx=5)
+        ttk.Button(btns, text="Cache Yonet", command=self.show_cache_dialog).pack(side="left", padx=5)
         ttk.Button(btns, text="Log temizle", command=self.clear).pack(side="left", padx=5)
 
         self.info_var = tk.StringVar()
@@ -971,6 +1034,88 @@ class App:
         else:
             line1 = "Henuz PDF okunmadi. 'PDF SEC + GEMINI ILE OKU' ile basla."
         self.info_var.set(f"{line1}\nAPI Key: {key_status}   |   Excel'de var olan cube'lar otomatik atlanir.")
+
+    def show_cache_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.title("Gemini PDF Cache")
+        win.geometry("700x400")
+        win.transient(self.root)
+        win.grab_set()
+
+        ttk.Label(win, padding=10,
+                  text=f"Cache klasoru: {CACHE_DIR}\n"
+                       "Bir PDF'i daha once okuduysan tekrar Gemini'ye gitmez (para tasarrufu).\n"
+                       "Bir entry'i sil -> o PDF'i tekrar yuklersen Gemini'ye tekrar gider.").pack(anchor="w")
+
+        tree = ttk.Treeview(win, columns=("name", "blocks", "date"), show="headings")
+        tree.heading("name", text="PDF dosyasi")
+        tree.heading("blocks", text="Blok")
+        tree.heading("date", text="Tarih")
+        tree.column("name", width=350)
+        tree.column("blocks", width=60)
+        tree.column("date", width=140)
+        tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        entries = []
+
+        def refresh():
+            for item in tree.get_children():
+                tree.delete(item)
+            entries.clear()
+            if not os.path.exists(CACHE_DIR):
+                return
+            for fname in sorted(os.listdir(CACHE_DIR)):
+                if not fname.endswith('.json'):
+                    continue
+                path = os.path.join(CACHE_DIR, fname)
+                try:
+                    with open(path, encoding='utf-8') as f:
+                        d = json.load(f)
+                    name = d.get('pdf_name', '(?)')
+                    blocks = d.get('block_count', len(d.get('blocks', [])))
+                    saved = d.get('saved_at', '?')
+                except Exception:
+                    name, blocks, saved = fname, '?', '?'
+                tree.insert("", "end", values=(name, blocks, saved))
+                entries.append(path)
+
+        refresh()
+
+        btn_frame = ttk.Frame(win, padding=10)
+        btn_frame.pack(fill="x")
+
+        def delete_selected():
+            sel = tree.selection()
+            if not sel:
+                return
+            for item_id in sel:
+                idx = tree.index(item_id)
+                path = entries[idx]
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+            refresh()
+            self.log(f"{len(sel)} cache entry silindi.")
+
+        def delete_all():
+            if not messagebox.askyesno("Onay", "Tum cache silinsin mi?", parent=win):
+                return
+            count = 0
+            if os.path.exists(CACHE_DIR):
+                for fname in os.listdir(CACHE_DIR):
+                    if fname.endswith('.json'):
+                        try:
+                            os.remove(os.path.join(CACHE_DIR, fname))
+                            count += 1
+                        except Exception:
+                            pass
+            refresh()
+            self.log(f"Tum cache silindi ({count} entry).")
+
+        ttk.Button(btn_frame, text="Secileni sil", command=delete_selected).pack(side="left")
+        ttk.Button(btn_frame, text="Tumunu sil", command=delete_all).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Kapat", command=win.destroy).pack(side="right")
 
     def show_api_key_dialog(self):
         win = tk.Toplevel(self.root)
