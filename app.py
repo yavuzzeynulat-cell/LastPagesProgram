@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.9"
+__version__ = "0.2.10"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -270,9 +270,10 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
             ws.cell(row=r, column=COL['M'], value=row['weight'])
         if row.get('load') is not None and row.get('row_type') != 'ft':
             ws.cell(row=r, column=COL['N'], value=row['load'])
-        # Tested By (P): satirda saat yaziliysa (08:24) o satira yaz.
+        # Tested By (P): satirda saat yaziliysa (08:24) o satira yaz, yatayda ortali.
         if row.get('test_time'):
-            ws.cell(row=r, column=COL['P'], value=row['test_time'])
+            p_cell = ws.cell(row=r, column=COL['P'], value=row['test_time'])
+            p_cell.alignment = Alignment(horizontal='center', vertical='center')
         if row.get('row_type') == 'site':
             ws.cell(row=r, column=COL['Q'], value='Site')
         f, src_r = donor_formulas.get('O', (None, None))
