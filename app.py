@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -51,13 +51,23 @@ DATE_FORMAT = 'DD/MM/YYYY'
 
 
 def parse_date(s):
+    """Tarihi date'e cevir. Okunamadi/bos/None ise None doner (patlamak yerine).
+    Gemini anti-uydurma prompt'u geregi okuyamadigi tarihi null birakabilir."""
     if isinstance(s, datetime):
         return s.date()
     if isinstance(s, date):
         return s
-    s = str(s).replace('/', '.').replace('-', '.')
+    if s is None:
+        return None
+    s = str(s).strip()
+    if s == '' or s.lower() in ('none', 'null'):
+        return None
+    s = s.replace('/', '.').replace('-', '.')
     parts = s.split('.')
-    d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+    try:
+        d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+    except (ValueError, IndexError):
+        return None
     if y < 100:
         y += 2000
     return date(y, m, d)
@@ -65,7 +75,11 @@ def parse_date(s):
 
 def compute_testing_date(sampling, row_type, custom):
     if custom:
-        return parse_date(custom)
+        cd = parse_date(custom)
+        if cd is not None:
+            return cd
+    if sampling is None:
+        return None
     days = {'7d': 7, 'cmd': 7, '28d': 28, 'wp': 28, 'ft': 28,
             '1day': 1, '2day': 2}.get(row_type)
     return sampling + timedelta(days=days) if days else None
@@ -174,12 +188,15 @@ def unmerge_overlapping(ws, start_row, end_row):
         ws.unmerge_cells(r)
 
 
-def write_block(ws, block, start_row, donor_styles, donor_formulas):
+def write_block(ws, block, start_row, donor_styles, donor_formulas, log=None):
     rows = block['rows']
     n = len(rows)
     end_row = start_row + n - 1
     unmerge_overlapping(ws, start_row, end_row)
-    sampling = parse_date(block['sampling_date'])
+    sampling = parse_date(block.get('sampling_date'))
+    if sampling is None and log:
+        log(f"  UYARI: cube {block.get('cube_no')} sampling_date okunamadi "
+            f"(deger={block.get('sampling_date')!r}) - I/K/L sutunlari bos birakildi, ELLE doldur.")
     cmd_idx = next((i for i, r in enumerate(rows) if r.get('row_type') == 'cmd'), None)
 
     batch_tickets = block.get('batch_tickets')
@@ -252,7 +269,8 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         r = start_row + i
         if row.get('mould') is not None:
             ws.cell(row=r, column=COL['C'], value=row['mould'])
-        ws.cell(row=r, column=COL['I'], value=sampling)
+        if sampling is not None:
+            ws.cell(row=r, column=COL['I'], value=sampling)
         td = compute_testing_date(sampling, row.get('row_type'), row.get('testing_date'))
         if td is not None:
             ws.cell(row=r, column=COL['K'], value=td)
@@ -356,7 +374,7 @@ def run_writer(excel_path, log):
     next_row = start_row
     for block in blocks_to_write:
         log(f"  -> cube {block['cube_no']} @ satir {next_row} ({len(block['rows'])} satir)")
-        next_row = write_block(ws, block, next_row, donor_styles, donor_formulas)
+        next_row = write_block(ws, block, next_row, donor_styles, donor_formulas, log)
 
     log(f"Kaydediliyor: {excel_path}")
     wb.save(excel_path)
