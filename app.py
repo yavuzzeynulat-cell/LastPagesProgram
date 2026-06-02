@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.10"
+__version__ = "0.2.11"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -597,11 +597,14 @@ GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi o
 
 Cube bloklari kutucuklardir; her blok bir "Cube No" satiriyla baslar ve bir sonraki Cube No'ya kadar surer. Tum sayfalardaki butun bloklari sirayla isle.
 
-ONEMLI - SAYFALAR ARASI BOLUNMUS BLOKLAR:
-- Bir cube blogu iki sayfa arasinda bolunmus olabilir (yarisi 1. sayfanin sonunda, devami 2. sayfanin basinda)
-- Bu durumda bloku TEK blok olarak cikar - hem ust hem alt satirlari ayni "rows" listesinde birlestir
-- 2. sayfanin basindaki rows'un cube_no'su yoktur (ust kisimda kalmistir) - 1. sayfada gordugun son cube_no ile esle
-- ASLA ayri iki blok yapma; ayni cube_no'ya ait satirlar tek blok olmali
+ONEMLI - SAYFA BASINDA BASLIKSIZ DEVAM SATIRLARI:
+- Sana TEK bir sayfa veriliyor. Bu sayfa, onceki sayfadan TASAN satirlarla baslayabilir:
+  en ustte "Cube No" basligi OLMAYAN, dogrudan mould satirlariyla baslayan bir kisim.
+- Bu durumda o basliksiz satirlari listenin EN BASINA su ozel blok olarak koy:
+  {"cube_no": null, "continuation": true, "rows": [ ...gordugun mould satirlari... ]}
+- continuation blogunun verisini (mould, weight, load) UYDURMA - sadece gercekten gordugunu yaz.
+- Sonra normal "Cube No" basligiyla baslayan bloklara devam et.
+- Sayfanin basinda boyle basliksiz satir YOKSA continuation blogu EKLEME.
 
 MOULD NO KURALI:
 - Mould No 1-3 haneli bir sayidir (orn: 9, 49, 124, 193).
@@ -954,10 +957,11 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
     log(f"Toplam payload: {total_kb} KB (eskiden ~95 MB idi - cok kucuk)")
 
     log("")
-    log(f"TEK Gemini cagrisi - {page_count} sayfa birlikte (sayfalar arasi bloklari yakalar)")
-    log("(toplam ~60-90sn beklenir, timeout 300sn)")
+    log(f"PARALEL Gemini cagrisi - {page_count} sayfa AYRI AYRI (her sayfa tek call)")
+    log("(her sayfa 15-30sn surer, paralel oldugu icin toplam ~30-60sn beklenir)")
+    log("Sayfa-arasi bolunmus bloklar post-processing'de birlestirilir.")
 
-    def call_with_retries(prompt_parts, max_attempts=3):
+    def call_with_retries(prompt_parts, max_attempts=3, page_num=0):
         last_err = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -966,7 +970,7 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
                     gax.ServiceUnavailable, gax.InternalServerError) as e:
                 last_err = e
                 wait = 2 ** (attempt - 1)
-                log(f"  {type(e).__name__} deneme {attempt}/{max_attempts}, {wait}s bekle")
+                log(f"  [sayfa {page_num}] {type(e).__name__} deneme {attempt}/{max_attempts}, {wait}s bekle")
                 if attempt < max_attempts:
                     time.sleep(wait)
             except gax.InvalidArgument:
@@ -977,76 +981,86 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
                     time.sleep(1)
         raise last_err if last_err else RuntimeError("Bilinmeyen hata")
 
-    def process_page_solo(idx):
-        """Fallback: tek sayfayi Gemini'ye yolla."""
+    def process_page(idx):
+        """Tek sayfayi Gemini'ye yolla, blocks dondur. Pixel-fallback'li.
+        Her sayfa AYRI call - Gemini'nin dikkati tek sayfaya odaklanir,
+        uydurma/karistirma minimuma iner. Sayfa basindaki basliksiz devam
+        satirlari prompt geregi continuation blogu olarak doner."""
         png_bytes = rendered[idx][0]
-        img = Image.open(BytesIO(png_bytes)); img.load()
         last_err = None
-        for target_px, source in [(TARGET_MAX_PX, png_bytes), (FALLBACK_MAX_PX, None)]:
+        attempts = [(TARGET_MAX_PX, png_bytes), (FALLBACK_MAX_PX, None)]
+        for target_px, source in attempts:
             try:
                 if source is None:
                     fresh, _, _, _ = render_at_target(doc[idx], target_px)
-                    img2 = Image.open(BytesIO(fresh)); img2.load()
+                    img = Image.open(BytesIO(fresh)); img.load()
                 else:
-                    img2 = img
-                resp = call_with_retries([GEMINI_PROMPT, img2])
-                blocks = _parse_gemini_json(resp.text, log)
-                log(f"  [sayfa {idx + 1}] max_px={target_px} -> {len(blocks)} blok")
-                return idx, blocks
+                    img = Image.open(BytesIO(source)); img.load()
+                resp = call_with_retries([GEMINI_PROMPT, img], page_num=idx + 1)
+                page_blocks = _parse_gemini_json(resp.text, log)
+                log(f"  [sayfa {idx + 1}] max_px={target_px} -> {len(page_blocks)} blok: "
+                    f"{[b.get('cube_no') for b in page_blocks]}")
+                return idx, page_blocks
             except gax.InvalidArgument as e:
                 last_err = e
+                log(f"  [sayfa {idx + 1}] max_px={target_px} reddedildi: {e}")
                 continue
+            except RuntimeError as e:
+                # parse hatasi (truncation) - dpi degisikligi cozmez
+                last_err = e
+                raise
             except Exception as e:
                 last_err = e
-                break
-        raise RuntimeError(f"Sayfa {idx + 1}: {last_err}")
+                log(f"  [sayfa {idx + 1}] max_px={target_px} hata: {type(e).__name__}: {e}")
+                continue
+        raise RuntimeError(f"Sayfa {idx + 1} okunamadi: {last_err}")
 
-    # ASIL CAGRI: Tum sayfalar TEK request (sayfa sinirlarini yakalar)
-    if progress_cb:
-        progress_cb(0, 1, "gemini")
-    img_list = []
+    all_blocks_by_page = {}
+    with ThreadPoolExecutor(max_workers=min(page_count, 4)) as pool:
+        future_to_idx = {pool.submit(process_page, i): i for i in range(page_count)}
+        completed = 0
+        for fut in as_completed(future_to_idx):
+            idx = future_to_idx[fut]
+            try:
+                page_idx, blocks = fut.result()
+                all_blocks_by_page[page_idx] = blocks
+            except Exception as e:
+                log(f"  [sayfa {idx + 1}] BASARISIZ: {e}")
+                all_blocks_by_page[idx] = None
+            completed += 1
+            if progress_cb:
+                progress_cb(completed - 1, page_count, "page")
+            log(f"  (ilerleme: {completed}/{page_count} sayfa tamam)")
+
+    failed = [i + 1 for i, b in all_blocks_by_page.items() if b is None]
+    if failed:
+        raise RuntimeError(f"Sayfa(lar) okunamadi: {failed}")
+
+    # Sayfa sirasiyla birlestir (sira onemli: continuation merge icin)
+    all_blocks = []
     for i in range(page_count):
-        img = Image.open(BytesIO(rendered[i][0])); img.load()
-        img_list.append(img)
+        all_blocks.extend(all_blocks_by_page.get(i, []))
 
-    log("Istek gonderiliyor (tek call - tum sayfalar)...")
-    all_blocks = None
-    try:
-        resp = call_with_retries([GEMINI_PROMPT] + img_list)
-        all_blocks = _parse_gemini_json(resp.text, log)
-        log(f"Tek-call basarili: {len(all_blocks)} blok")
-    except (gax.InvalidArgument, RuntimeError) as e:
-        # Cok blok varsa response truncate olabilir, ya da payload buyuk olabilir
-        # Fallback: sayfa basina paralel
-        log(f"Tek-call basarisiz ({type(e).__name__}: {e})")
-        log("FALLBACK: sayfa basina paralel (sayfa sinirlari kac olabilir)")
-        all_blocks_by_page = {}
-        with ThreadPoolExecutor(max_workers=min(page_count, 4)) as pool:
-            future_to_idx = {pool.submit(process_page_solo, i): i for i in range(page_count)}
-            done = 0
-            for fut in as_completed(future_to_idx):
-                idx = future_to_idx[fut]
-                try:
-                    page_idx, blocks = fut.result()
-                    all_blocks_by_page[page_idx] = blocks
-                except Exception as ex:
-                    log(f"  [sayfa {idx + 1}] FAIL: {ex}")
-                    all_blocks_by_page[idx] = None
-                done += 1
-                if progress_cb:
-                    progress_cb(done - 1, page_count, "page")
-        failed = [i + 1 for i, b in all_blocks_by_page.items() if b is None]
-        if failed:
-            raise RuntimeError(f"Sayfa(lar) okunamadi: {failed}")
-        all_blocks = []
-        for i in range(page_count):
-            all_blocks.extend(all_blocks_by_page.get(i, []))
-
-    # Normalize + dedup by cube_no
+    # Normalize + dedup + SAYFA-ARASI continuation birlestirme
     seen = set()
     unique = []
-    log("Normalize ediliyor...")
+    log("Normalize + sayfa-arasi bolunmus blok birlestirme...")
+
+    def _is_continuation(raw):
+        return (isinstance(raw, dict) and raw.get('continuation')
+                and raw.get('cube_no') in (None, "", "null", 0, "0"))
+
     for raw in all_blocks:
+        if _is_continuation(raw):
+            # Bu sayfanin basindaki basliksiz devam satirlari - onceki bloga ekle
+            tmp = _normalize_block({'cube_no': 0, 'rows': raw.get('rows') or []}, log)
+            cont_rows = tmp['rows'] if tmp else []
+            if unique and cont_rows:
+                unique[-1]['rows'].extend(cont_rows)
+                log(f"  sayfa-arasi devam: {len(cont_rows)} satir cube {unique[-1]['cube_no']} blokuna eklendi")
+            elif cont_rows:
+                log(f"  uyari: devam blogu var ama oncesinde blok yok, {len(cont_rows)} satir atlandi")
+            continue
         nb = _normalize_block(raw, log)
         if nb is None:
             continue
