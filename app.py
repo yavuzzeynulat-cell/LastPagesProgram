@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -262,6 +262,11 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
             ws.cell(row=r, column=COL['L'], value=age_val)
         if row.get('row_type') == 'ft' and row.get('ft_note'):
             ws.cell(row=r, column=COL['N'], value=row['ft_note'])
+        # Weight (gr) -> M, Load (kN) -> N. Yalnizca Gemini gercekten cikardiysa yaz.
+        if row.get('weight') is not None:
+            ws.cell(row=r, column=COL['M'], value=row['weight'])
+        if row.get('load') is not None and row.get('row_type') != 'ft':
+            ws.cell(row=r, column=COL['N'], value=row['load'])
         if row.get('row_type') == 'site':
             ws.cell(row=r, column=COL['Q'], value='Site')
         f, src_r = donor_formulas.get('O', (None, None))
@@ -576,6 +581,13 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi olarak cikar.
 
+==================== EN ONEMLI KURAL: UYDURMA YASAK ====================
+- SADECE sayfada GERCEKTEN GORDUGUN seyleri yaz. Tablodaki gibi davran: ne yaziliysa o.
+- Bir blokta kac satir GORUYORSAN TAM O KADAR satir uret. Satir EKLEME, var olan satiri COGALTMA, satir ATLAMA.
+- Bir hucreyi okuyamiyorsan veya bos ise: TAHMIN ETME, BASKA SATIRDAN KOPYALAMA. O alani hic yazma (null birak).
+- Asagidaki ORNEK SADECE JSON FORMATINI gosterir. Ornekteki sayilari (cube_no, mould, tarih, mix kod, weight, load) cevabina ASLA kopyalama; onlar gercek veri DEGIL.
+========================================================================
+
 Cube bloklari kutucuklardir; her blok bir "Cube No" satiriyla baslar ve bir sonraki Cube No'ya kadar surer. Tum sayfalardaki butun bloklari sirayla isle.
 
 ONEMLI - SAYFALAR ARASI BOLUNMUS BLOKLAR:
@@ -583,6 +595,10 @@ ONEMLI - SAYFALAR ARASI BOLUNMUS BLOKLAR:
 - Bu durumda bloku TEK blok olarak cikar - hem ust hem alt satirlari ayni "rows" listesinde birlestir
 - 2. sayfanin basindaki rows'un cube_no'su yoktur (ust kisimda kalmistir) - 1. sayfada gordugun son cube_no ile esle
 - ASLA ayri iki blok yapma; ayni cube_no'ya ait satirlar tek blok olmali
+
+MOULD NO KURALI:
+- Mould No 1-3 haneli bir sayidir (orn: 9, 49, 124, 193).
+- 4 haneli bir sayi (orn: 7304, 7301, 7011) MOULD DEGILDIR - bu CMD mix-design kodudur, cmd_code alanina yazilir, mould'a ASLA yazilmaz.
 
 ROW TYPES:
 - "7d"   : 7-gun testi (Age=7)
@@ -593,6 +609,16 @@ ROW TYPES:
 - "2day" : 2-gun testi (Age=2)
 - "site" : Sahaya gonderilen kupler ("Tested By" sutununda "Site" yazili)
 - "ft"   : F/T ozet satiri (Age="F/T", Load sutununda "(X Adet)" yazili)
+
+CMD SATIRI:
+- "cmd" satirinin mould'u kendi gercek 1-3 haneli mould numarasidir (mix kodu DEGIL).
+- cmd_code = blogun Concrete Mix Design numarasi: CMD satiri civarinda yazili 4 haneli sayi (orn: 7304).
+- cmd_code'a ASLA konum/aciklama yazisini ("B03-T03", "Barrier", "Girders" gibi) yazma; o site_location'a aittir.
+
+SITE SATIRLARI - YAS KURALI (cok onemli):
+- Bir Site satirina age SADECE o satirda acikca gun sayisi yaziliysa ver (orn "1.Day"->age=1, "2.Day"->age=2) ve o zaman testing_date ekle.
+- Satirda yas yazili DEGILSE: age verme, testing_date verme. Yani sadece {"mould": X, "row_type": "site"}.
+- Bir Site kupunun yasini/tarihini KOMSU satirdan KOPYALAMA. Cogu Site kupu test edilmemistir, yasi bostur.
 
 Eger bir satirda hem age=1 (1.Day) hem "Site" varsa: row_type="site" + age=1 + testing_date (sampling+1).
 Mould 60 ornek: row_type="site" + age=2 + testing_date.
@@ -618,7 +644,7 @@ JSON formati ZORUNLU:
         {"mould": 78, "row_type": "28d", "age": 28},
         {"mould": 142, "row_type": "28d", "age": 28},
         {"mould": 106, "row_type": "28d", "age": 28},
-        {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26"},
+        {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26", "weight": 7887.4, "load": 661.87},
         {"mould": 89, "row_type": "site"},
         {"mould": 8, "row_type": "site"}
       ]
@@ -637,6 +663,7 @@ Satir indexleri blok icinde 0-bazli (blogun ilk satiri = 0).
 
 c_grade formati: "C30/37" gibi (basina C ekle).
 sampling_date / testing_date formati: "DD.MM.YY" (orn: "21.05.26").
+weight (gr) ve load (kN): satirda Weight ve Load sutununda yazili ondalik sayilar. SADECE yaziliysa ver (orn 7887.4), yoksa hic verme. Compressive Strength'i (N/mm2) ASLA yazma - o Excel'de otomatik hesaplaniyor.
 F/T satirinda: {"mould": null, "row_type": "ft", "age": "F/T", "ft_note": "(15 Adet)"}.
 
 SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme.
@@ -738,6 +765,17 @@ def _normalize_block(b, log):
         rt = r.get('row_type')
         if isinstance(rt, str):
             r['row_type'] = rt.lower().strip()
+        # weight (gr) / load (kN): float veya None. Gecersizse alani dusur.
+        for fld in ('weight', 'load'):
+            if fld in r:
+                v = r[fld]
+                if v is None or v == "" or v == "null":
+                    r.pop(fld, None)
+                else:
+                    try:
+                        r[fld] = float(str(v).replace(',', '.'))
+                    except (ValueError, TypeError):
+                        r.pop(fld, None)
         # age: int / str / left as is
         cleaned_rows.append(r)
     b['rows'] = cleaned_rows
