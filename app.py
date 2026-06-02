@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.8"
+__version__ = "0.2.9"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -45,7 +45,7 @@ COL = {
     'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15,
     'P': 16, 'Q': 17,
 }
-WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J', 'P']  # Q is per-row (site rows write 'Site' there)
+WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J']  # P (Tested By: saat) ve Q (Site) per-row
 DATE_COLS = ['I', 'K']
 DATE_FORMAT = 'DD/MM/YYYY'
 
@@ -241,7 +241,10 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
         r = bt.get('rows') or []
         if not r:
             continue
-        ws.cell(row=start_row + min(r), column=COL['G'], value=bt.get('ticket'))
+        g_cell = ws.cell(row=start_row + min(r), column=COL['G'], value=bt.get('ticket'))
+        # Batch ticket no kendi mould satiriyla hizali olsun: hucrenin ustunde + yatay ortali.
+        # (Ikinci+ ticket'larda merge ortalama yapip sayiyi ortaya kaydiriyordu.)
+        g_cell.alignment = Alignment(horizontal='center', vertical='top')
     ws.cell(row=start_row, column=COL['H'], value=block.get('c_grade', ''))
     ws.cell(row=start_row, column=COL['J'], value=block.get('sampled_by', ''))
 
@@ -267,6 +270,9 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas):
             ws.cell(row=r, column=COL['M'], value=row['weight'])
         if row.get('load') is not None and row.get('row_type') != 'ft':
             ws.cell(row=r, column=COL['N'], value=row['load'])
+        # Tested By (P): satirda saat yaziliysa (08:24) o satira yaz.
+        if row.get('test_time'):
+            ws.cell(row=r, column=COL['P'], value=row['test_time'])
         if row.get('row_type') == 'site':
             ws.cell(row=r, column=COL['Q'], value='Site')
         f, src_r = donor_formulas.get('O', (None, None))
@@ -644,7 +650,7 @@ JSON formati ZORUNLU:
         {"mould": 78, "row_type": "28d", "age": 28},
         {"mould": 142, "row_type": "28d", "age": 28},
         {"mould": 106, "row_type": "28d", "age": 28},
-        {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26", "weight": 7887.4, "load": 661.87},
+        {"mould": 166, "row_type": "site", "age": 1, "testing_date": "22.05.26", "weight": 7887.4, "load": 661.87, "test_time": "08:24"},
         {"mould": 89, "row_type": "site"},
         {"mould": 8, "row_type": "site"}
       ]
@@ -664,6 +670,7 @@ Satir indexleri blok icinde 0-bazli (blogun ilk satiri = 0).
 c_grade formati: "C30/37" gibi (basina C ekle).
 sampling_date / testing_date formati: "DD.MM.YY" (orn: "21.05.26").
 weight (gr) ve load (kN): satirda Weight ve Load sutununda yazili ondalik sayilar. SADECE yaziliysa ver (orn 7887.4), yoksa hic verme. Compressive Strength'i (N/mm2) ASLA yazma - o Excel'de otomatik hesaplaniyor.
+test_time: "Tested By (Signature)" sutununda saat yaziliysa "HH:MM" formatinda ver (orn "08:24"). Yoksa hic verme.
 F/T satirinda: {"mould": null, "row_type": "ft", "age": "F/T", "ft_note": "(15 Adet)"}.
 
 SADECE GECERLI JSON dondur, markdown code fence kullanma, baska metin ekleme.
@@ -776,6 +783,13 @@ def _normalize_block(b, log):
                         r[fld] = float(str(v).replace(',', '.'))
                     except (ValueError, TypeError):
                         r.pop(fld, None)
+        # test_time: string olarak birak (HH:MM). Bos ise dusur.
+        if 'test_time' in r:
+            tt = r['test_time']
+            if tt is None or str(tt).strip() in ('', 'null'):
+                r.pop('test_time', None)
+            else:
+                r['test_time'] = str(tt).strip()
         # age: int / str / left as is
         cleaned_rows.append(r)
     b['rows'] = cleaned_rows
