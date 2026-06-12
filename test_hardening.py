@@ -1,24 +1,16 @@
 """Saglamlastirma testleri: satir uydurma (tekrar mould) ve D/CMD uyarisi."""
-from app import drop_duplicate_mould_rows, build_d_value, drop_phantom_cmd_rows
+from app import drop_duplicate_mould_rows, build_d_value
 
 
-def test_phantom_cmd_dropped_cmd_code_recovered():
+def test_empty_mould_row_kept():
+    # Bos mould'lu satir (formdaki devam/bos satiri) KORUNMALI, silinmemeli
     rows = [
-        {'mould': 8, 'row_type': '7d'},
-        {'mould': None, 'row_type': 'cmd', 'cmd_code': '7410'},  # fantom extra
-        {'mould': 187, 'row_type': '28d'},
+        {'mould': 49, 'row_type': '28d'},
+        {'mould': None, 'row_type': 'empty', 'age': '-'},
+        {'mould': None, 'row_type': 'empty', 'age': '-'},
     ]
-    out, recovered = drop_phantom_cmd_rows(rows)
-    assert [r['mould'] for r in out] == [8, 187]
-    assert recovered == '7410'
-
-
-def test_real_cmd_row_with_mould_kept():
-    # cube 795 gibi: cmd satiri gercek mould'la gelir -> KORUNUR
-    rows = [{'mould': 34, 'row_type': '7d'}, {'mould': 73, 'row_type': 'cmd', 'age': 7}]
-    out, recovered = drop_phantom_cmd_rows(rows)
-    assert [r['mould'] for r in out] == [34, 73]
-    assert recovered is None
+    out = drop_duplicate_mould_rows(rows, cube_no=789, log=None)
+    assert len(out) == 3  # bos satirlar deduplenmedi, korundu
 
 
 
