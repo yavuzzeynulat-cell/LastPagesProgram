@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -619,6 +619,7 @@ GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi o
 ==================== EN ONEMLI KURAL: UYDURMA YASAK ====================
 - SADECE sayfada GERCEKTEN GORDUGUN seyleri yaz. Tablodaki gibi davran: ne yaziliysa o.
 - Bir blokta kac satir GORUYORSAN TAM O KADAR satir uret. Satir EKLEME, var olan satiri COGALTMA, satir ATLAMA.
+- BOS MOULD'LU SATIRI ATLAMA: bir satirda kup no (mould) BOS olabilir ama satir formda fiziksel olarak VARDIR (ust satirin "S2A BP / CMD / 7301" veya lokasyon metni alt satira tasmis, age sutununda "-" yazili). Bu satiri de uret: {"mould": null, "row_type": "empty", "age": "-"}. Blogun satir sayisi formdaki FIZIKSEL satir sayisiyla AYNI olmali.
 - Bir hucreyi okuyamiyorsan veya bos ise: TAHMIN ETME, BASKA SATIRDAN KOPYALAMA. O alani hic yazma (null birak).
 - Asagidaki ORNEK SADECE JSON FORMATINI gosterir. Ornekteki sayilari (cube_no, mould, tarih, mix kod, weight, load) cevabina ASLA kopyalama; onlar gercek veri DEGIL.
 ========================================================================
@@ -723,10 +724,13 @@ def _pdf_content_hash(path):
 
 
 def _cache_path(pdf_hash):
-    """Cache dosya yolu. Model adini da iceriyor: model degisince (flash->pro)
-    eski cache HIT etmez, otomatik yeniden okur. 'Cache'i elle sil' derdi biter."""
+    """Cache dosya yolu. Model adi + prompt hash iceriyor: model VEYA prompt
+    degisince eski cache HIT etmez, otomatik yeniden okur. 'Cache'i elle sil'
+    derdi biter - kod/prompt her degistirdigimizde taze okuma garanti."""
+    import hashlib
     safe_model = GEMINI_MODEL.replace('/', '_').replace('\\', '_')
-    return os.path.join(CACHE_DIR, f"{pdf_hash}_{safe_model}.json")
+    pver = hashlib.sha256(GEMINI_PROMPT.encode('utf-8')).hexdigest()[:6]
+    return os.path.join(CACHE_DIR, f"{pdf_hash}_{safe_model}_p{pver}.json")
 
 
 def cache_load(pdf_hash):
@@ -798,32 +802,6 @@ def drop_duplicate_mould_rows(rows, cube_no=None, log=None):
     return out
 
 
-def drop_phantom_cmd_rows(rows, log=None, cube_no=None):
-    """Mould'u OLMAYAN 'cmd' satiri = fantom EXTRA satir.
-    Gercek formda CMD ayri bir satir DEGIL; bir test kupunun uzerine yazili
-    mix-design etiketidir (orn cube 795: cmd satiri gercek mould 73 ile gelir,
-    ayni zamanda 7d testi). Gemini cogu blokta bunu ayri {mould:null,
-    row_type:'cmd'} satirina cikariyor -> Excel'de BOS extra satir cikiyor.
-    cmd_code zaten block-level'da tutuluyor (D sutununu o besler), bu yuzden
-    fantom satiri dusurmek HICBIR veri kaybetmez. Dusurulen satirda cmd_code
-    varsa geri dondurur (block-level eksikse oraya yazilsin diye).
-    mould'u OLAN cmd satiri (gercek kup) KORUNUR."""
-    out = []
-    recovered = None
-    dropped = 0
-    for r in rows:
-        if r.get('row_type') == 'cmd' and r.get('mould') is None:
-            if r.get('cmd_code'):
-                recovered = r.get('cmd_code')
-            dropped += 1
-            continue
-        out.append(r)
-    if dropped and log:
-        log(f"  cube {cube_no}: {dropped} fantom cmd satiri (mould yok) DUSURULDU "
-            f"- cmd_code D sutununda korunuyor, extra satir kalkti.")
-    return out, recovered
-
-
 def _normalize_block(b, log):
     """Defensive normalizer: Gemini'nin sasirtici formatlarini standartlastir.
     Yan etki: blok dict'i in-place duzenler ve dondurur (ya da None drop)."""
@@ -882,10 +860,6 @@ def _normalize_block(b, log):
                 r['test_time'] = str(tt).strip()
         # age: int / str / left as is
         cleaned_rows.append(r)
-    # Fantom cmd satiri (mould yok) = extra satir; dusur, cmd_code'u koru
-    cleaned_rows, recovered_cmd = drop_phantom_cmd_rows(cleaned_rows, log, b['cube_no'])
-    if recovered_cmd and not b.get('cmd_code'):
-        b['cmd_code'] = recovered_cmd
     # Satir uydurma agi: tekrar eden mould'lari dusur (fiziksel kup tek kez gecer)
     cleaned_rows = drop_duplicate_mould_rows(cleaned_rows, b['cube_no'], log)
     b['rows'] = cleaned_rows
