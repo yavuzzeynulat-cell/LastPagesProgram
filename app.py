@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.12"
+__version__ = "0.2.13"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -188,6 +188,18 @@ def unmerge_overlapping(ws, start_row, end_row):
         ws.unmerge_cells(r)
 
 
+def build_d_value(block):
+    """D sutunu icerigi: supplier (default 'S2A BP') + varsa CMD satiri.
+    DIKKAT: Gemini anti-uydurma prompt'u geregi supplier null/bos gelebilir.
+    block.get('supplier', 'S2A BP') TUZAK: key VAR ama deger None ise default
+    DONMEZ, None doner -> D bos kalir veya 'None' yazilir. 'or' ile cozulur."""
+    supplier = block.get('supplier') or 'S2A BP'
+    cmd = block.get('cmd_code')
+    if cmd:
+        return f"{supplier}\nCMD-{cmd}"
+    return supplier
+
+
 def write_block(ws, block, start_row, donor_styles, donor_formulas, log=None):
     rows = block['rows']
     n = len(rows)
@@ -237,9 +249,7 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas, log=None):
     ws.cell(row=start_row, column=COL['A'], value=block['cube_no'])
     ws.cell(row=start_row, column=COL['B'], value=block['sample_mark'])
     # D column: single merged cell with multi-line content (supplier + CMD-XXX)
-    d_value = block.get('supplier', 'S2A BP')
-    if block.get('cmd_code'):
-        d_value = f"{d_value}\nCMD-{block['cmd_code']}"
+    d_value = build_d_value(block)
     d_cell = ws.cell(row=start_row, column=COL['D'])
     d_cell.value = d_value
     d_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -627,6 +637,7 @@ ONEMLI - SAYFA BASINDA BASLIKSIZ DEVAM SATIRLARI:
 MOULD NO KURALI:
 - Mould No 1-3 haneli bir sayidir (orn: 9, 49, 124, 193).
 - 4 haneli bir sayi (orn: 7304, 7301, 7011) MOULD DEGILDIR - bu CMD mix-design kodudur, cmd_code alanina yazilir, mould'a ASLA yazilmaz.
+- BIR MOULD NUMARASI BIR BLOKTA YALNIZCA BIR KEZ GECER. Ayni mould'u iki satirda TEKRAR YAZMA. Satir sayisini blokta GERCEKTEN gordugun mould satiri kadar tut - eksik gordugunde satir EKLEME, fazla gordugunu sanip COGALTMA.
 
 ROW TYPES:
 - "7d"   : 7-gun testi (Age=7)
@@ -641,6 +652,7 @@ ROW TYPES:
 CMD SATIRI:
 - "cmd" satirinin mould'u kendi gercek 1-3 haneli mould numarasidir (mix kodu DEGIL).
 - cmd_code = blogun Concrete Mix Design numarasi: CMD satiri civarinda yazili 4 haneli sayi (orn: 7304).
+- Bir blokta CMD satiri varsa o 4 haneli cmd_code'u DIKKATLE oku ve MUTLAKA yaz. Sadece rakamlar tam okunamiyorsa null birak; aksi halde bos BIRAKMA.
 - cmd_code'a ASLA konum/aciklama yazisini ("B03-T03", "Barrier", "Girders" gibi) yazma; o site_location'a aittir.
 
 SITE SATIRLARI - YAS KURALI (cok onemli):
@@ -756,6 +768,28 @@ def save_api_key(key):
         f.write(key.strip())
 
 
+def drop_duplicate_mould_rows(rows, cube_no=None, log=None):
+    """Bir blokta ayni mould numarasi BIRDEN FAZLA gecemez (her mould fiziksel
+    bir kup). Tekrar eden mould = Gemini'nin satir UYDURMASI (blogu 'standart'
+    sayiya tamamlamak icin satir cogaltir). Ilk gecisi tut, sonrakini dusur.
+    mould=None satirlari (ft / okunamayan) deduplenmez - hepsi korunur."""
+    seen = set()
+    out = []
+    dropped = []
+    for r in rows:
+        m = r.get('mould')
+        if m is not None and m in seen:
+            dropped.append(m)
+            continue
+        if m is not None:
+            seen.add(m)
+        out.append(r)
+    if dropped and log:
+        log(f"  UYDURMA SUPHESI: cube {cube_no} - tekrar eden mould {dropped} "
+            f"DUSURULDU (bir mould blokta yalnizca bir kez gecer).")
+    return out
+
+
 def _normalize_block(b, log):
     """Defensive normalizer: Gemini'nin sasirtici formatlarini standartlastir.
     Yan etki: blok dict'i in-place duzenler ve dondurur (ya da None drop)."""
@@ -814,8 +848,17 @@ def _normalize_block(b, log):
                 r['test_time'] = str(tt).strip()
         # age: int / str / left as is
         cleaned_rows.append(r)
+    # Satir uydurma agi: tekrar eden mould'lari dusur (fiziksel kup tek kez gecer)
+    cleaned_rows = drop_duplicate_mould_rows(cleaned_rows, b['cube_no'], log)
     b['rows'] = cleaned_rows
     n = len(cleaned_rows)
+
+    # CMD kontrolu: cmd satiri var ama cmd_code okunmadiysa D'de "CMD-xxxx" eksik kalir.
+    # Kodu yoktan uyduramayiz - kullaniciya yuksek sesle haber ver, elle doldursun.
+    has_cmd_row = any(r.get('row_type') == 'cmd' for r in cleaned_rows)
+    if has_cmd_row and not b.get('cmd_code'):
+        log(f"  UYARI: cube {b['cube_no']} CMD satiri VAR ama cmd_code okunamadi - "
+            f"D sutununda 'CMD-xxxx' EKSIK kalacak, ELLE doldur.")
 
     # batch_tickets normalize: [start,end] veya tam liste her ikisini de kabul et
     if b.get('batch_tickets'):
