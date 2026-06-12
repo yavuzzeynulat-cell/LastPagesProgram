@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.13"
+__version__ = "0.2.14"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -612,7 +612,7 @@ CONFIG = os.path.join(APP_DIR, "config.txt")
 API_KEY_FILE = os.path.join(APP_DIR, "gemini_api_key.txt")
 CACHE_DIR = os.path.join(APP_DIR, "gemini_cache")
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-pro"
 
 GEMINI_PROMPT = """Bu el yazisi sayfa(lar)indaki HER cube blogunu JSON listesi olarak cikar.
 
@@ -722,9 +722,16 @@ def _pdf_content_hash(path):
     return h.hexdigest()[:16]
 
 
+def _cache_path(pdf_hash):
+    """Cache dosya yolu. Model adini da iceriyor: model degisince (flash->pro)
+    eski cache HIT etmez, otomatik yeniden okur. 'Cache'i elle sil' derdi biter."""
+    safe_model = GEMINI_MODEL.replace('/', '_').replace('\\', '_')
+    return os.path.join(CACHE_DIR, f"{pdf_hash}_{safe_model}.json")
+
+
 def cache_load(pdf_hash):
     """Var ise blocks list'i dondurur, yoksa None."""
-    path = os.path.join(CACHE_DIR, f"{pdf_hash}.json")
+    path = _cache_path(pdf_hash)
     if not os.path.exists(path):
         return None
     try:
@@ -742,11 +749,12 @@ def cache_save(pdf_hash, blocks, pdf_path):
         data = {
             "pdf_name": os.path.basename(pdf_path),
             "pdf_hash": pdf_hash,
+            "model": GEMINI_MODEL,
             "saved_at": datetime.now().isoformat(timespec='seconds'),
             "block_count": len(blocks),
             "blocks": blocks,
         }
-        path = os.path.join(CACHE_DIR, f"{pdf_hash}.json")
+        path = _cache_path(pdf_hash)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -788,6 +796,32 @@ def drop_duplicate_mould_rows(rows, cube_no=None, log=None):
         log(f"  UYDURMA SUPHESI: cube {cube_no} - tekrar eden mould {dropped} "
             f"DUSURULDU (bir mould blokta yalnizca bir kez gecer).")
     return out
+
+
+def drop_phantom_cmd_rows(rows, log=None, cube_no=None):
+    """Mould'u OLMAYAN 'cmd' satiri = fantom EXTRA satir.
+    Gercek formda CMD ayri bir satir DEGIL; bir test kupunun uzerine yazili
+    mix-design etiketidir (orn cube 795: cmd satiri gercek mould 73 ile gelir,
+    ayni zamanda 7d testi). Gemini cogu blokta bunu ayri {mould:null,
+    row_type:'cmd'} satirina cikariyor -> Excel'de BOS extra satir cikiyor.
+    cmd_code zaten block-level'da tutuluyor (D sutununu o besler), bu yuzden
+    fantom satiri dusurmek HICBIR veri kaybetmez. Dusurulen satirda cmd_code
+    varsa geri dondurur (block-level eksikse oraya yazilsin diye).
+    mould'u OLAN cmd satiri (gercek kup) KORUNUR."""
+    out = []
+    recovered = None
+    dropped = 0
+    for r in rows:
+        if r.get('row_type') == 'cmd' and r.get('mould') is None:
+            if r.get('cmd_code'):
+                recovered = r.get('cmd_code')
+            dropped += 1
+            continue
+        out.append(r)
+    if dropped and log:
+        log(f"  cube {cube_no}: {dropped} fantom cmd satiri (mould yok) DUSURULDU "
+            f"- cmd_code D sutununda korunuyor, extra satir kalkti.")
+    return out, recovered
 
 
 def _normalize_block(b, log):
@@ -848,6 +882,10 @@ def _normalize_block(b, log):
                 r['test_time'] = str(tt).strip()
         # age: int / str / left as is
         cleaned_rows.append(r)
+    # Fantom cmd satiri (mould yok) = extra satir; dusur, cmd_code'u koru
+    cleaned_rows, recovered_cmd = drop_phantom_cmd_rows(cleaned_rows, log, b['cube_no'])
+    if recovered_cmd and not b.get('cmd_code'):
+        b['cmd_code'] = recovered_cmd
     # Satir uydurma agi: tekrar eden mould'lari dusur (fiziksel kup tek kez gecer)
     cleaned_rows = drop_duplicate_mould_rows(cleaned_rows, b['cube_no'], log)
     b['rows'] = cleaned_rows
@@ -960,7 +998,7 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
             if isinstance(blocks, list) and blocks:
                 log(f"*** CACHE HIT *** - {len(blocks)} blok daha onceden okunmustu.")
                 log(f"  Gemini cagrilmiyor (PARA TASARRUFU). Cube_no'lar: {[b.get('cube_no') for b in blocks]}")
-                log(f"  Yeniden okumak istersen cache dosyasini sil: {CACHE_DIR}\\{pdf_hash}.json")
+                log(f"  Yeniden okumak istersen cache dosyasini sil: {_cache_path(pdf_hash)}")
                 return blocks
         log("Cache miss - Gemini cagrilacak.")
 
@@ -1135,7 +1173,7 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
     log(f"Toplam {len(unique)} essiz blok cikarildi: {sorted(seen)}")
     # Cache'e kaydet (sonraki ayni PDF'te Gemini cagrilmasin)
     cache_save(pdf_hash, unique, pdf_path)
-    log(f"Cache kaydedildi: {CACHE_DIR}\\{pdf_hash}.json")
+    log(f"Cache kaydedildi: {_cache_path(pdf_hash)}")
     return unique
 
 
