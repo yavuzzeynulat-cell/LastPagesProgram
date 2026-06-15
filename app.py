@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.15"
+__version__ = "0.2.16"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -247,7 +247,9 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas, log=None):
                            start_column=COL['G'], end_column=COL['G'])
 
     ws.cell(row=start_row, column=COL['A'], value=block['cube_no'])
-    ws.cell(row=start_row, column=COL['B'], value=block['sample_mark'])
+    # .get: cache HIT bloklari _normalize_block'tan GECMEZ; eksik sample_mark'ta
+    # crash yerine B sutununu bos birak (KeyError fix).
+    ws.cell(row=start_row, column=COL['B'], value=block.get('sample_mark', ''))
     # D column: single merged cell with multi-line content (supplier + CMD-XXX)
     d_value = build_d_value(block)
     d_cell = ws.cell(row=start_row, column=COL['D'])
@@ -903,7 +905,16 @@ def _normalize_block(b, log):
     if isinstance(cg, str) and cg and not cg.upper().startswith('C'):
         b['c_grade'] = 'C' + cg
 
-    # sample_mark, sampling_date, sampled_by, supplier, cmd_code, site_location: as-is
+    # sample_mark: string garanti. Eksik/null ise '' (B sutunu bos) + uyari.
+    # Forma gore okunamayabilir; kodla uydurmuyoruz, sadece crash'i onluyoruz.
+    sm = b.get('sample_mark')
+    if sm is None or str(sm).strip().lower() in ('', 'null'):
+        b['sample_mark'] = ''
+        log(f"  uyari: cube {b['cube_no']} sample_mark okunamadi - B sutunu bos kalacak")
+    else:
+        b['sample_mark'] = str(sm).strip()
+
+    # sampling_date, sampled_by, supplier, cmd_code, site_location: as-is
     return b
 
 
