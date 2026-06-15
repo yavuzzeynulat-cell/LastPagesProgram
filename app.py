@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.16"
+__version__ = "0.2.17"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -636,6 +636,13 @@ ONEMLI - SAYFA BASINDA BASLIKSIZ DEVAM SATIRLARI:
 - continuation blogunun verisini (mould, weight, load) UYDURMA - sadece gercekten gordugunu yaz.
 - Sonra normal "Cube No" basligiyla baslayan bloklara devam et.
 - Sayfanin basinda boyle basliksiz satir YOKSA continuation blogu EKLEME.
+
+SAMPLE MARK (B sutunu - DIKKATLE oku, bos birakma):
+- sample_mark = her blogun BASLIK satirinda (Cube No ile ayni satir) yazili numune referans kodu.
+- Format genelde "<ONEK>-CON-<sayi>" seklinde, orn: G26-CON-0759, T26-CON-0761.
+  ONEK (G26, T26 gibi harf+yil) ve sayi forma gore DEGISIR - SABIT DEGIL, ne yaziyorsa onu yaz, ornektekini kopyalama.
+- Bu kodu DIKKATLE oku ve MUTLAKA yaz. El yazisi biraz zor olsa bile "-CON-" kalibi ile rakamlari cogu zaman secebilirsin; GORUNUYORSA bos BIRAKMA.
+- Sadece gercekten hic okunamiyorsa (cok silik) null birak; asla tahmin ederek UYDURMA.
 
 MOULD NO KURALI:
 - Mould No 1-3 haneli bir sayidir (orn: 9, 49, 124, 193).
