@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 
 
-__version__ = "0.2.17"
+__version__ = "0.2.18"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -637,12 +637,13 @@ ONEMLI - SAYFA BASINDA BASLIKSIZ DEVAM SATIRLARI:
 - Sonra normal "Cube No" basligiyla baslayan bloklara devam et.
 - Sayfanin basinda boyle basliksiz satir YOKSA continuation blogu EKLEME.
 
-SAMPLE MARK (B sutunu - DIKKATLE oku, bos birakma):
-- sample_mark = her blogun BASLIK satirinda (Cube No ile ayni satir) yazili numune referans kodu.
+SAMPLE MARK (B sutunu - cmd_code KADAR ONEMLI, MUTLAKA OKU):
+- sample_mark = her blogun BASLIK satirinda (Cube No ile ayni satir, hemen yaninda) yazili numune referans kodu.
+- HER BLOKTA sample_mark VARDIR ve neredeyse HER ZAMAN DOLUDUR. Bos/null dondurmek neredeyse her zaman HATADIR - once tekrar bak, mutlaka oku.
 - Format genelde "<ONEK>-CON-<sayi>" seklinde, orn: G26-CON-0759, T26-CON-0761.
   ONEK (G26, T26 gibi harf+yil) ve sayi forma gore DEGISIR - SABIT DEGIL, ne yaziyorsa onu yaz, ornektekini kopyalama.
-- Bu kodu DIKKATLE oku ve MUTLAKA yaz. El yazisi biraz zor olsa bile "-CON-" kalibi ile rakamlari cogu zaman secebilirsin; GORUNUYORSA bos BIRAKMA.
-- Sadece gercekten hic okunamiyorsa (cok silik) null birak; asla tahmin ederek UYDURMA.
+- Bu kodu cmd_code'u okudugun KADAR DIKKATLE oku ve MUTLAKA yaz. El yazisi zor olsa bile "-CON-" kalibi ile harfleri/rakamlari sec; GORUNUYORSA bos BIRAKMA.
+- SADECE kagit fiziksel olarak o hucrede bos ise null birak. Okumak zor diye atlamak YASAK.
 
 MOULD NO KURALI:
 - Mould No 1-3 haneli bir sayidir (orn: 9, 49, 124, 193).
