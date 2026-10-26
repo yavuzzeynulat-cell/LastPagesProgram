@@ -21,7 +21,7 @@ import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk, messagebox
 
 import openpyxl
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 
 __version__ = "0.2.18"
@@ -48,6 +48,10 @@ COL = {
 WHOLE_BLOCK_MERGES = ['A', 'B', 'E', 'F', 'H', 'J']  # P (Tested By: saat) ve Q (Site) per-row
 DATE_COLS = ['I', 'K']
 DATE_FORMAT = 'DD/MM/YYYY'
+SARI = PatternFill('solid', fgColor='FFFFF2CC')  # acik sari: sadece dikkat ceksin
+BELIRSIZ_COL = {'cube_no': 'A', 'sample_mark': 'B', 'supplier': 'D', 'cmd_code': 'D',
+                'batch_ticket': 'G', 'sampling_date': 'I',
+                'mould': 'C', 'age': 'L', 'weight': 'M', 'load': 'N'}
 
 
 def parse_date(s):
@@ -309,6 +313,15 @@ def write_block(ws, block, start_row, donor_styles, donor_formulas, log=None):
         f, src_r = donor_formulas.get('O', (None, None))
         if f:
             ws.cell(row=r, column=COL['O'], value=shift_formula(f, src_r, r))
+
+    # Yerel okuyucunun emin olmadigi hucreler SARI (Gemini bloklarinda _belirsiz yok)
+    marks = [(start_row, k) for k in block.get('_belirsiz', [])]
+    marks += [(start_row + i, k) for i, row in enumerate(rows) for k in row.get('_belirsiz', [])]
+    for r, k in marks:
+        if k in BELIRSIZ_COL:
+            ws.cell(row=r, column=COL[BELIRSIZ_COL[k]]).fill = SARI
+    if marks and log:
+        log(f"    cube {block['cube_no']}: {len(marks)} hucre SARI - kontrol et")
 
     return end_row + 1
 
@@ -603,6 +616,41 @@ def check_for_update(root):
                 f"Mevcut: v{__version__}\n\n"
                 "Simdi guncellemek ister misin?"):
                 _do_update(root, asset_url, latest_tag)
+        root.after(0, prompt)
+    threading.Thread(target=bg, daemon=True).start()
+
+
+YEREL_SURUM = 3  # deneme paketinin no'su = GitHub on-surum etiketi yerel-deneme-<no>
+YEREL_ASSET = "LastPagesApp_YerelDeneme.exe"
+
+
+def check_for_yerel_update(root):
+    """DENEME paketi: daha yeni yerel-deneme-<no> on-surumu varsa sadece exe'yi indirir
+    (_internal ve model ayni kalir). On-surumler asil guncelleyicinin 'latest'ine gorunmez."""
+    def bg():
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=20",
+                headers={'User-Agent': f'LastPagesApp/{__version__}'},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.load(resp)
+        except Exception:
+            return
+        best = None
+        for rel in data:
+            m = re.fullmatch(r'yerel-deneme-(\d+)', rel.get('tag_name', ''))
+            url = next((a.get('browser_download_url') for a in rel.get('assets', [])
+                        if a.get('name') == YEREL_ASSET), None)
+            if m and url and int(m.group(1)) > YEREL_SURUM and (best is None or int(m.group(1)) > best[0]):
+                best = (int(m.group(1)), url)
+        if not best:
+            return
+        def prompt():
+            if messagebox.askyesno("Guncelleme mevcut",
+                f"Yerel okuma denemesi {best[0]} mevcut (sizdeki: {YEREL_SURUM}).\n\n"
+                "Simdi guncellemek ister misin? (sadece program dosyasi iner, ~90 MB)"):
+                _do_update(root, best[1], f"yerel-deneme-{best[0]}")
         root.after(0, prompt)
     threading.Thread(target=bg, daemon=True).start()
 
@@ -1170,13 +1218,35 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
     return unique
 
 
+def yerel_extract_blocks(pdf_path, log, progress_cb=None):
+    """DENEME: PDF'i internetsiz yerel modelle okur (yerel_okuma.py). Gemini cagrilmaz,
+    Gemini cache'ine yazilmaz. Sonuc gemini_extract_blocks ile ayni normalize'den gecer."""
+    import yerel_okuma
+    raw = yerel_okuma.read_blocks(pdf_path, log, progress_cb)
+    unique, seen = [], set()
+    for rb in raw:
+        if rb.get('continuation') and rb.get('cube_no') in (None, "", 0):
+            tmp = _normalize_block({'cube_no': 0, 'rows': rb.get('rows') or []}, log)
+            if unique and tmp and tmp['rows']:
+                unique[-1]['rows'].extend(tmp['rows'])
+                log(f"  sayfa-arasi devam: {len(tmp['rows'])} satir cube {unique[-1]['cube_no']} blokuna eklendi")
+            continue
+        nb = _normalize_block(rb, log)
+        if nb is None or nb['cube_no'] in seen:
+            continue
+        seen.add(nb['cube_no'])
+        unique.append(nb)
+    log(f"Yerel: toplam {len(unique)} blok: {sorted(seen)}")
+    return unique
+
+
 # ---------------- GUI ----------------
 
 
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(f"Last Pages - Cube Block Creator  (v{__version__})")
+        root.title(f"Last Pages - Cube Block Creator  (v{__version__})  [YEREL OKUMA DENEMESI]")
         root.geometry("900x650")
 
         top = ttk.Frame(root, padding=10)
@@ -1190,6 +1260,8 @@ class App:
         btns.pack(fill="x")
         self.pdf_btn = ttk.Button(btns, text="PDF SEC + GEMINI ILE OKU", command=self.start_pdf_read)
         self.pdf_btn.pack(side="left")
+        self.yerel_btn = ttk.Button(btns, text="PDF SEC + YEREL OKU (deneme)", command=self.start_pdf_read_yerel)
+        self.yerel_btn.pack(side="left", padx=(5, 0))
         self.run_btn = ttk.Button(btns, text="EXCEL'E YAZ", command=self.start_run)
         self.run_btn.pack(side="left", padx=5)
         ttk.Button(btns, text="API Key Ayarla", command=self.show_api_key_dialog).pack(side="left", padx=5)
@@ -1388,24 +1460,42 @@ class App:
         self.run_btn.config(state="disabled")
         threading.Thread(target=self._pdf_worker, args=(pdf, api_key), daemon=True).start()
 
-    def _pdf_worker(self, pdf, api_key):
+    def start_pdf_read_yerel(self):
+        pdf = filedialog.askopenfilename(
+            title="PDF sec (el yazisi formu) - YEREL okuma",
+            filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
+        )
+        if not pdf:
+            return
+        self.pdf_btn.config(state="disabled")
+        self.yerel_btn.config(state="disabled")
+        self.run_btn.config(state="disabled")
+        threading.Thread(target=self._pdf_worker, args=(pdf, None, True), daemon=True).start()
+
+    def _pdf_worker(self, pdf, api_key, yerel=False):
         global BLOCKS
         try:
             self.log("=" * 60)
-            self.log(f"PDF okuma basliyor: {pdf}")
-            self.set_status("Gemini PDF'i okuyor...")
+            self.log(f"PDF okuma basliyor ({'YEREL' if yerel else 'GEMINI'}): {pdf}")
+            self.set_status("Yerel model PDF'i okuyor (sayfa basi ~2-3 dk)..." if yerel
+                            else "Gemini PDF'i okuyor...")
 
             def progress(cur, total, phase):
                 if phase == "page":
-                    self.set_status(f"Gemini sayfa {cur+1}/{total}...")
+                    self.set_status(f"{'Yerel' if yerel else 'Gemini'} sayfa {cur+1}/{total}...")
                 elif phase == "render":
                     self.set_status(f"Sayfa render: {cur+1}/{total}")
                 elif phase == "gemini":
                     self.set_status("Gemini API cagriliyor...")
 
-            new_blocks = gemini_extract_blocks(pdf, api_key, self.log, progress)
-            if not new_blocks:
-                raise RuntimeError("Gemini hicbir blok dondurmedi.")
+            if yerel:
+                new_blocks = yerel_extract_blocks(pdf, self.log, progress)
+                if not new_blocks:
+                    raise RuntimeError("Yerel okuma hicbir blok dondurmedi.")
+            else:
+                new_blocks = gemini_extract_blocks(pdf, api_key, self.log, progress)
+                if not new_blocks:
+                    raise RuntimeError("Gemini hicbir blok dondurmedi.")
 
             BLOCKS = new_blocks
             self.log("")
@@ -1425,6 +1515,7 @@ class App:
             messagebox.showerror("PDF Hata", str(e))
         finally:
             self.pdf_btn.config(state="normal")
+            self.yerel_btn.config(state="normal")
             self.run_btn.config(state="normal")
 
     def start_run(self):
@@ -1473,9 +1564,28 @@ class App:
 def main():
     root = tk.Tk()
     App(root)
-    root.after(800, lambda: check_for_update(root))
+    # yerel-okuyucu deneme dalinda asil guncelleyici KAPALI: GitHub surumunu gorup
+    # kendini Gemini-only surumle degistirmesin. main dalinda aciktir.
+    # root.after(800, lambda: check_for_update(root))
+    root.after(800, lambda: check_for_yerel_update(root))
     root.mainloop()
 
 
+def _yerel_test(pdf):
+    """Paket testi: LastPagesApp_YerelDeneme.exe --yerel-test <pdf> -> yerel_test_sonuc.json (pencere acmaz)."""
+    out = os.path.join(APP_DIR, "yerel_test_sonuc.json")
+    lines = []
+    try:
+        blocks = yerel_extract_blocks(pdf, lines.append)
+        res = {"ok": True, "blocks": blocks, "log": lines}
+    except Exception:
+        res = {"ok": False, "error": traceback.format_exc(), "log": lines}
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False, indent=1)
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--yerel-test":
+        _yerel_test(sys.argv[2])
+    else:
+        main()
