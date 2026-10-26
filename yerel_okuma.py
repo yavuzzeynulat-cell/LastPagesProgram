@@ -1,7 +1,8 @@
-"""Yerel (internetsiz) okuyucu ile PDF -> blok listesi. DENEME: Gemini yolunun yerine değil, yanında.
+"""Yerel (internetsiz) okuyucu ile PDF -> blok listesi. Ayarlar'dan Gemini ya da Yerel AI seçilir.
 
-Okuyucunun kodu "local reading/kod" klasöründe; paketlenmiş exe'de modüller exe'nin içinde.
-Model ve kalıp listesi exe'nin yanındaki "modeller/kat_hepsi" ve "kaliplar.txt"ten okunur.
+Okuyucunun kodu "local reading/kod" klasöründe; paketlenmiş exe'de modüller ve hızlı model
+(modeller/pp_hepsi_onnx, ONNX, torch gerekmez) exe'nin içinde. Kalıp listesi exe'nin yanındaki
+"kaliplar.txt"ten okunur (varsa; yeni eklenen kalıplar orada kalıcı olur).
 Sonuç Gemini'nin döndürdüğü biçimdedir; app.py aynı _normalize_block'tan geçirir.
 Gemini önbelleğine hiçbir şey yazılmaz.
 """
@@ -41,15 +42,19 @@ def read_blocks(pdf_path, log, progress_cb=None):
     import ocr
     import okuyucu
 
-    model_dir = _app_dir() / "modeller" / "kat_hepsi"
-    model = str(model_dir) if (model_dir / "config.json").exists() else okuyucu.MODEL
+    model = okuyucu.MODEL
+    if getattr(sys, "frozen", False):  # exe'nin içine gömülü model
+        model = str(Path(sys._MEIPASS) / "modeller" / "pp_hepsi_onnx")
     moulds = _app_dir() / "kaliplar.txt"
+    if getattr(sys, "frozen", False) and not moulds.exists():  # ilk açılış: gömülü listeyi yanına kopyala
+        import shutil
+        shutil.copy(Path(sys._MEIPASS) / "kaliplar.txt", moulds)
     if moulds.exists():  # yeni eklenen kalıplar exe'nin yanında kalıcı olsun
         listeler.MOULD_FILE = moulds
         listeler.MOULDS[:] = listeler.load_moulds()
     log(f"Yerel model yukleniyor: {model}")
     t0 = time.time()
-    eng = ocr.TrOCR(model)
+    eng = ocr.load(model)
     log(f"  model hazir ({time.time() - t0:.0f} sn). Kalip listesi: {len(listeler.MOULDS)} kalip")
 
     doc = fitz.open(pdf_path)

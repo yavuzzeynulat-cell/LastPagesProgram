@@ -24,7 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 
 
-__version__ = "0.2.18"
+__version__ = "0.3.0"
 GITHUB_REPO = "yavuzzeynulat-cell/LastPagesProgram"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_ASSET_NAME = "LastPagesApp.exe"
@@ -620,45 +620,24 @@ def check_for_update(root):
     threading.Thread(target=bg, daemon=True).start()
 
 
-YEREL_SURUM = 3  # deneme paketinin no'su = GitHub on-surum etiketi yerel-deneme-<no>
-YEREL_ASSET = "LastPagesApp_YerelDeneme.exe"
-
-
-def check_for_yerel_update(root):
-    """DENEME paketi: daha yeni yerel-deneme-<no> on-surumu varsa sadece exe'yi indirir
-    (_internal ve model ayni kalir). On-surumler asil guncelleyicinin 'latest'ine gorunmez."""
-    def bg():
-        try:
-            req = urllib.request.Request(
-                f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=20",
-                headers={'User-Agent': f'LastPagesApp/{__version__}'},
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.load(resp)
-        except Exception:
-            return
-        best = None
-        for rel in data:
-            m = re.fullmatch(r'yerel-deneme-(\d+)', rel.get('tag_name', ''))
-            url = next((a.get('browser_download_url') for a in rel.get('assets', [])
-                        if a.get('name') == YEREL_ASSET), None)
-            if m and url and int(m.group(1)) > YEREL_SURUM and (best is None or int(m.group(1)) > best[0]):
-                best = (int(m.group(1)), url)
-        if not best:
-            return
-        def prompt():
-            if messagebox.askyesno("Guncelleme mevcut",
-                f"Yerel okuma denemesi {best[0]} mevcut (sizdeki: {YEREL_SURUM}).\n\n"
-                "Simdi guncellemek ister misin? (sadece program dosyasi iner, ~90 MB)"):
-                _do_update(root, best[1], f"yerel-deneme-{best[0]}")
-        root.after(0, prompt)
-    threading.Thread(target=bg, daemon=True).start()
-
-
 # ---------------- GEMINI PDF READER ----------------
 
 APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG = os.path.join(APP_DIR, "config.txt")
+OKUMA_FILE = os.path.join(APP_DIR, "okuma.txt")  # "yerel" (varsayilan) ya da "gemini"
+
+
+def load_okuma():
+    try:
+        with open(OKUMA_FILE, encoding="utf-8") as f:
+            return "gemini" if f.read().strip() == "gemini" else "yerel"
+    except OSError:
+        return "yerel"
+
+
+def save_okuma(v):
+    with open(OKUMA_FILE, "w", encoding="utf-8") as f:
+        f.write(v)
 API_KEY_FILE = os.path.join(APP_DIR, "gemini_api_key.txt")
 CACHE_DIR = os.path.join(APP_DIR, "gemini_cache")
 
@@ -1219,7 +1198,7 @@ def gemini_extract_blocks(pdf_path, api_key, log, progress_cb=None, force=False)
 
 
 def yerel_extract_blocks(pdf_path, log, progress_cb=None):
-    """DENEME: PDF'i internetsiz yerel modelle okur (yerel_okuma.py). Gemini cagrilmaz,
+    """PDF'i internetsiz yerel modelle okur (yerel_okuma.py). Gemini cagrilmaz,
     Gemini cache'ine yazilmaz. Sonuc gemini_extract_blocks ile ayni normalize'den gecer."""
     import yerel_okuma
     raw = yerel_okuma.read_blocks(pdf_path, log, progress_cb)
@@ -1246,7 +1225,7 @@ def yerel_extract_blocks(pdf_path, log, progress_cb=None):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(f"Last Pages - Cube Block Creator  (v{__version__})  [YEREL OKUMA DENEMESI]")
+        root.title(f"Last Pages - Cube Block Creator  (v{__version__})")
         root.geometry("900x650")
 
         top = ttk.Frame(root, padding=10)
@@ -1258,15 +1237,12 @@ class App:
 
         btns = ttk.Frame(root, padding=(10, 0))
         btns.pack(fill="x")
-        self.pdf_btn = ttk.Button(btns, text="PDF SEC + GEMINI ILE OKU", command=self.start_pdf_read)
+        self.pdf_btn = ttk.Button(btns, text="1) PDF SEC + OKU", command=self.start_pdf_read)
         self.pdf_btn.pack(side="left")
-        self.yerel_btn = ttk.Button(btns, text="PDF SEC + YEREL OKU (deneme)", command=self.start_pdf_read_yerel)
-        self.yerel_btn.pack(side="left", padx=(5, 0))
-        self.run_btn = ttk.Button(btns, text="EXCEL'E YAZ", command=self.start_run)
+        self.run_btn = ttk.Button(btns, text="2) EXCEL'E YAZ", command=self.start_run)
         self.run_btn.pack(side="left", padx=5)
-        ttk.Button(btns, text="API Key Ayarla", command=self.show_api_key_dialog).pack(side="left", padx=5)
-        ttk.Button(btns, text="Cache Yonet", command=self.show_cache_dialog).pack(side="left", padx=5)
-        ttk.Button(btns, text="Log temizle", command=self.clear).pack(side="left", padx=5)
+        ttk.Button(btns, text="Log temizle", command=self.clear).pack(side="right")
+        ttk.Button(btns, text="Ayarlar", command=self.show_settings_dialog).pack(side="right", padx=5)
 
         self.info_var = tk.StringVar()
         self._refresh_info()
@@ -1290,9 +1266,8 @@ class App:
         self.log(f"Python: {sys.version.split()[0]}")
         self.log("")
         self.log("Akis:")
-        self.log("  1) 'API Key Ayarla' - Gemini key gir (ilk kez)")
-        self.log("  2) 'PDF SEC + GEMINI ILE OKU' - el yazisi formu yukle")
-        self.log("  3) 'EXCEL'E YAZ' - Excel'de olmayan cube'lari yazar")
+        self.log("  1) 'PDF SEC + OKU' - el yazisi formu yukle (okuma yontemi: Ayarlar)")
+        self.log("  2) 'EXCEL'E YAZ' - Excel'de olmayan cube'lari yazar; emin olunmayan hucreler SARI")
         self.log("")
 
     def log(self, msg=""):
@@ -1312,13 +1287,15 @@ class App:
             self.excel_var.set(path)
 
     def _refresh_info(self):
-        key_set = bool(load_api_key())
-        key_status = "OK" if key_set else "YOK - 'API Key Ayarla' bas"
         if BLOCKS:
             line1 = f"PDF'ten okunan {len(BLOCKS)} blok: " + ", ".join(str(b['cube_no']) for b in BLOCKS)
         else:
-            line1 = "Henuz PDF okunmadi. 'PDF SEC + GEMINI ILE OKU' ile basla."
-        self.info_var.set(f"{line1}\nAPI Key: {key_status}   |   Excel'de var olan cube'lar otomatik atlanir.")
+            line1 = "Henuz PDF okunmadi. '1) PDF SEC + OKU' ile basla."
+        if load_okuma() == "gemini":
+            yontem = "Gemini (API Key: " + ("OK" if load_api_key() else "YOK - Ayarlar'dan gir") + ")"
+        else:
+            yontem = "Yerel AI (internetsiz, ucretsiz)"
+        self.info_var.set(f"{line1}\nOkuma: {yontem}   |   Excel'de var olan cube'lar otomatik atlanir.")
 
     def show_cache_dialog(self):
         win = tk.Toplevel(self.root)
@@ -1402,6 +1379,30 @@ class App:
         ttk.Button(btn_frame, text="Tumunu sil", command=delete_all).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Kapat", command=win.destroy).pack(side="right")
 
+    def show_settings_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.title("Ayarlar")
+        win.geometry("460x250")
+        win.transient(self.root)
+        win.grab_set()
+        box = ttk.LabelFrame(win, text="Okuma yontemi", padding=10)
+        box.pack(fill="x", padx=10, pady=10)
+        var = tk.StringVar(value=load_okuma())
+
+        def changed():
+            save_okuma(var.get())
+            self.log(f"Okuma yontemi: {'Yerel AI' if var.get() == 'yerel' else 'Gemini'}")
+            self._refresh_info()
+        ttk.Radiobutton(box, text="Yerel AI  (internetsiz, ucretsiz, sayfa basi ~20 sn)",
+                        variable=var, value="yerel", command=changed).pack(anchor="w")
+        ttk.Radiobutton(box, text="Gemini  (internet + API key gerekir, ucretli)",
+                        variable=var, value="gemini", command=changed).pack(anchor="w", pady=(4, 0))
+        gem = ttk.LabelFrame(win, text="Gemini", padding=10)
+        gem.pack(fill="x", padx=10)
+        ttk.Button(gem, text="API Key Ayarla", command=self.show_api_key_dialog).pack(side="left")
+        ttk.Button(gem, text="Cache Yonet", command=self.show_cache_dialog).pack(side="left", padx=5)
+        ttk.Button(win, text="Kapat", command=win.destroy).pack(pady=10)
+
     def show_api_key_dialog(self):
         win = tk.Toplevel(self.root)
         win.title("Gemini API Key")
@@ -1445,10 +1446,12 @@ class App:
         self.root.update_idletasks()
 
     def start_pdf_read(self):
-        api_key = load_api_key()
-        if not api_key:
+        yerel = load_okuma() == "yerel"
+        api_key = None if yerel else load_api_key()
+        if not yerel and not api_key:
             messagebox.showwarning("API Key Yok",
-                "Once 'API Key Ayarla' butonuyla Gemini API key'i gir.")
+                "Okuma yontemi Gemini. Once Ayarlar'dan Gemini API key'i gir\n"
+                "ya da Ayarlar'dan 'Yerel AI'yi sec.")
             return
         pdf = filedialog.askopenfilename(
             title="PDF sec (el yazisi formu)",
@@ -1458,26 +1461,14 @@ class App:
             return
         self.pdf_btn.config(state="disabled")
         self.run_btn.config(state="disabled")
-        threading.Thread(target=self._pdf_worker, args=(pdf, api_key), daemon=True).start()
-
-    def start_pdf_read_yerel(self):
-        pdf = filedialog.askopenfilename(
-            title="PDF sec (el yazisi formu) - YEREL okuma",
-            filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
-        )
-        if not pdf:
-            return
-        self.pdf_btn.config(state="disabled")
-        self.yerel_btn.config(state="disabled")
-        self.run_btn.config(state="disabled")
-        threading.Thread(target=self._pdf_worker, args=(pdf, None, True), daemon=True).start()
+        threading.Thread(target=self._pdf_worker, args=(pdf, api_key, yerel), daemon=True).start()
 
     def _pdf_worker(self, pdf, api_key, yerel=False):
         global BLOCKS
         try:
             self.log("=" * 60)
             self.log(f"PDF okuma basliyor ({'YEREL' if yerel else 'GEMINI'}): {pdf}")
-            self.set_status("Yerel model PDF'i okuyor (sayfa basi ~2-3 dk)..." if yerel
+            self.set_status("Yerel AI PDF'i okuyor (sayfa basi ~20 sn)..." if yerel
                             else "Gemini PDF'i okuyor...")
 
             def progress(cur, total, phase):
@@ -1515,7 +1506,6 @@ class App:
             messagebox.showerror("PDF Hata", str(e))
         finally:
             self.pdf_btn.config(state="normal")
-            self.yerel_btn.config(state="normal")
             self.run_btn.config(state="normal")
 
     def start_run(self):
@@ -1525,7 +1515,7 @@ class App:
             return
         if not BLOCKS:
             messagebox.showwarning("Blok yok",
-                "Once 'PDF SEC + GEMINI ILE OKU' ile PDF yukle.\n"
+                "Once '1) PDF SEC + OKU' ile PDF yukle.\n"
                 "Yazilacak blok yok.")
             return
         if not messagebox.askokcancel("Onay",
@@ -1564,10 +1554,7 @@ class App:
 def main():
     root = tk.Tk()
     App(root)
-    # yerel-okuyucu deneme dalinda asil guncelleyici KAPALI: GitHub surumunu gorup
-    # kendini Gemini-only surumle degistirmesin. main dalinda aciktir.
-    # root.after(800, lambda: check_for_update(root))
-    root.after(800, lambda: check_for_yerel_update(root))
+    root.after(800, lambda: check_for_update(root))
     root.mainloop()
 
 
