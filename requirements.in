@@ -1,0 +1,11 @@
+# Doğrudan kullanılan paketler (sabit sürüm). Kilit: requirements.txt (pip-compile --generate-hashes).
+google-generativeai==0.8.6
+pymupdf==1.27.2.2
+pillow==13.0.0
+pywin32==311
+openpyxl==3.1.5
+numpy==2.4.6
+opencv-python==4.13.0.92
+onnxruntime==1.26.0
+pyinstaller==6.19.0
+pytest==9.0.3

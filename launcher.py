@@ -20,6 +20,13 @@ REPO = "https://raw.githubusercontent.com/yavuzzeynulat-cell/LastPagesProgram/ma
 HERE = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG = os.path.join(HERE, "config.txt")
 
+# Tedarik zinciri: openpyxl yalniz bu surum + parmak iziyle kurulur (alt paketi dahil);
+# PyPI'deki paket degistirilmisse pip kurmaz. Degerler requirements.txt kilidinden.
+OPENPYXL_KILIT = """\
+openpyxl==3.1.5 --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
+et-xmlfile==2.0.0 --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
+"""
+
 
 class App:
     def __init__(self, root):
@@ -137,8 +144,11 @@ class App:
                 self.log("    Zaten kurulu.")
             except ImportError:
                 self.log("    Kuruluyor (pip)...")
+                kilit = os.path.join(HERE, "openpyxl_kilit.txt")
+                with open(kilit, "w", encoding="utf-8") as f:
+                    f.write(OPENPYXL_KILIT)
                 r = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "openpyxl"],
+                    [sys.executable, "-m", "pip", "install", "--require-hashes", "--no-deps", "-r", kilit],
                     capture_output=True, text=True,
                 )
                 self.log(r.stdout)
